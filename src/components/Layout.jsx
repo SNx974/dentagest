@@ -3,7 +3,7 @@ import { useApp } from '../context/AppContext'
 import {
   LayoutDashboard, Calendar, Users, Building2, TrendingUp,
   History, Settings, LogOut, ChevronLeft, ChevronRight,
-  Menu, Bell, Moon, Sun, Search, Plus, Stethoscope
+  Menu, X, Moon, Sun, Search, Plus
 } from 'lucide-react'
 
 const NAV_ITEMS = [
@@ -42,6 +42,13 @@ function Sidebar({ mobileOpen, onClose }) {
             <div className="logo-sub">Micro-BNC</div>
           </div>
         )}
+        <button
+          className="sidebar-close-btn"
+          onClick={onClose}
+          title="Fermer"
+        >
+          <X size={18} />
+        </button>
         <button
           className="sidebar-toggle-btn"
           onClick={() => setSidebarOpen(!sidebarOpen)}
@@ -190,12 +197,12 @@ function TopBar({ onMenuClick }) {
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <button
-          className="btn btn-primary btn-sm"
+          className="btn btn-primary btn-sm btn-quick-act"
           onClick={() => setCurrentPage('actes')}
-          style={{ gap: 6 }}
+          style={{ gap: 6, flexShrink: 0 }}
         >
           <Plus size={15} />
-          Acte rapide
+          <span className="quick-act-label">Acte rapide</span>
         </button>
       </div>
     </div>

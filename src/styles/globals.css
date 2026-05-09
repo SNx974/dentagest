@@ -182,13 +182,21 @@ body {
 
 /* Overlay mobile */
 .sidebar-overlay {
-  display: none;
   position: fixed; inset: 0;
   background: rgba(0,0,0,0.5);
   z-index: 199;
   backdrop-filter: blur(2px);
 }
-.sidebar-overlay.visible { display: block; }
+
+/* Bouton fermer sidebar (mobile uniquement) */
+.sidebar-close-btn {
+  display: none;
+  align-items: center; justify-content: center;
+  width: 32px; height: 32px; border-radius: var(--radius-sm);
+  background: var(--bg-hover); border: none;
+  cursor: pointer; color: var(--text);
+  margin-left: auto; flex-shrink: 0;
+}
 
 /* ─── TOP BAR ─── */
 .top-bar {
@@ -209,7 +217,11 @@ body {
   background: var(--bg-hover); border: none;
   cursor: pointer; color: var(--text);
   flex-shrink: 0;
+  position: relative; z-index: 201;
 }
+
+/* Bouton Acte rapide — texte masqué sur petit écran */
+.btn-quick-act .quick-act-label { display: inline; }
 
 .top-bar-plafond { display: flex; align-items: center; gap: 10px; cursor: pointer; }
 .top-bar-search { flex: 1; max-width: 340px; }
@@ -555,9 +567,15 @@ tr:hover td { background: var(--bg-hover); }
   /* Bouton hamburger visible */
   .hamburger-btn { display: flex; }
 
+  /* Bouton fermer sidebar visible sur mobile */
+  .sidebar-close-btn { display: flex; }
+
+  /* Bouton Acte rapide: icône seulement */
+  .btn-quick-act .quick-act-label { display: none; }
+
   /* Top bar simplifiée */
-  .top-bar { padding: 0 14px; gap: 10px; }
-  .top-bar-search { max-width: none; }
+  .top-bar { padding: 0 14px; gap: 8px; }
+  .top-bar-search { max-width: none; flex: 1; }
   .top-bar-plafond { display: none; }
 
   /* Page container */
