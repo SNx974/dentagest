@@ -1,20 +1,31 @@
-# ── Stage 1 : build ──────────────────────────────────────────
-FROM node:20-alpine AS builder
+# ── Stage 1 : build React ────────────────────────────────────
+FROM node:20-alpine AS frontend-builder
 
 WORKDIR /app
-
 COPY package*.json ./
 RUN npm ci --frozen-lockfile
 
-COPY . .
+COPY index.html vite.config.js ./
+COPY src ./src
 RUN npm run build
 
-# ── Stage 2 : serve ──────────────────────────────────────────
-FROM nginx:1.27-alpine AS runner
+# ── Stage 2 : serveur Node.js ────────────────────────────────
+FROM node:20-alpine AS runner
 
-COPY --from=builder /app/dist /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+WORKDIR /app
 
-EXPOSE 80
+# Dépendances serveur seulement
+COPY server/package*.json ./
+RUN npm ci --production
 
-CMD ["nginx", "-g", "daemon off;"]
+# Code serveur
+COPY server/ .
+
+# Frontend buildé → dossier public du serveur
+COPY --from=frontend-builder /app/dist ./public
+
+EXPOSE 3000
+
+ENV NODE_ENV=production
+
+CMD ["node", "index.js"]
