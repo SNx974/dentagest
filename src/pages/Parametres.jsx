@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { useApp } from '../context/AppContext'
-import { Save, User, Calculator, Target, Palette, Download, Trash2, AlertTriangle, Tag } from 'lucide-react'
+import { Save, User, Calculator, Target, Palette, Download, Trash2, AlertTriangle, Tag, Plus, X, List } from 'lucide-react'
 
 const ACT_TYPES = [
   'Consultation', 'Urgence', 'Détartrage', 'Extraction simple', 'Extraction complexe',
@@ -35,6 +35,19 @@ export default function Parametres() {
   const setS = (k, v) => setSettingsForm(f => ({ ...f, [k]: v }))
   const setCarcdsf = (k, v) => setSettingsForm(f => ({ ...f, carcdsf: { ...f.carcdsf, [k]: parseFloat(v) || 0 } }))
   const setActPrice = (actType, v) => setSettingsForm(f => ({ ...f, actPrices: { ...(f.actPrices || {}), [actType]: v === '' ? undefined : parseFloat(v) || 0 } }))
+
+  const currentActTypes = settingsForm.actTypes || ACT_TYPES
+  const [newActType, setNewActType] = useState('')
+
+  const addActType = () => {
+    const trimmed = newActType.trim()
+    if (!trimmed || currentActTypes.includes(trimmed)) return
+    setSettingsForm(f => ({ ...f, actTypes: [...currentActTypes, trimmed] }))
+    setNewActType('')
+  }
+  const removeActType = (type) => {
+    setSettingsForm(f => ({ ...f, actTypes: currentActTypes.filter(t => t !== type) }))
+  }
   const setU = (k, v) => setUserForm(f => ({ ...f, [k]: v }))
 
   const handleSaveUser = () => {
@@ -205,13 +218,50 @@ export default function Parametres() {
         </div>
       </Section>
 
+      {/* Types d'actes */}
+      <Section title="Types d'actes" icon={List}>
+        <div style={{ background: 'var(--primary-50)', borderRadius: 'var(--radius)', padding: '12px 14px', marginBottom: 16, fontSize: 13, color: 'var(--primary)' }}>
+          💡 Personnalisez la liste des actes proposés dans le formulaire. Ajoutez vos actes spécifiques, supprimez ceux que vous n'utilisez pas.
+        </div>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+          <input
+            className="form-control"
+            placeholder="Nouveau type d'acte..."
+            value={newActType}
+            onChange={e => setNewActType(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addActType())}
+            style={{ flex: 1 }}
+          />
+          <button className="btn btn-primary" onClick={addActType} disabled={!newActType.trim()}>
+            <Plus size={15} /> Ajouter
+          </button>
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          {currentActTypes.map(type => (
+            <div key={type} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 20, padding: '5px 12px 5px 14px', fontSize: 13 }}>
+              <span>{type}</span>
+              <button
+                onClick={() => removeActType(type)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', padding: 0, lineHeight: 1 }}
+                title="Supprimer"
+              >
+                <X size={13} />
+              </button>
+            </div>
+          ))}
+        </div>
+        <div style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end' }}>
+          <SaveButton id="settings" label="Sauvegarder les types" />
+        </div>
+      </Section>
+
       {/* Tarifs par acte */}
       <Section title="Tarifs par défaut par acte" icon={Tag}>
         <div style={{ background: 'var(--primary-50)', borderRadius: 'var(--radius)', padding: '12px 14px', marginBottom: 16, fontSize: 13, color: 'var(--primary)' }}>
           💡 Renseignez vos tarifs habituels. Le montant sera pré-rempli automatiquement lors de la création d'un acte.
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 10 }}>
-          {ACT_TYPES.map(type => (
+          {currentActTypes.map(type => (
             <div key={type} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--bg)', borderRadius: 'var(--radius-sm)', padding: '8px 12px' }}>
               <label style={{ flex: 1, fontSize: 13, color: 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={type}>{type}</label>
               <div style={{ position: 'relative', width: 90, flexShrink: 0 }}>

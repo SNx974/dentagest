@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react'
 import { useApp } from '../context/AppContext'
 import { Plus, Edit2, Trash2, Search, Filter, Euro, Check, Clock, AlertCircle } from 'lucide-react'
 
-const ACT_TYPES = [
+const DEFAULT_ACT_TYPES = [
   'Consultation', 'Urgence', 'Détartrage', 'Extraction simple', 'Extraction complexe',
   'Composite antérieur', 'Composite postérieur', 'Inlay-Onlay', 'Couronne céramique',
   'Couronne métal-céramique', 'Bridge 3 éléments', 'Bridge 4 éléments', 'Bridge 5+ éléments',
@@ -22,6 +22,7 @@ const PAYMENT_METHODS = [
 
 function ActModal({ act, onClose, onSave }) {
   const { data } = useApp()
+  const ACT_TYPES = data?.settings?.actTypes || DEFAULT_ACT_TYPES
   const defaultRepl = data?.replacements?.find(r => r.status === 'active') || data?.replacements?.[0]
   const defaultRate = defaultRepl?.retrocessionRate || data?.settings?.defaultRetrocessionRate || 70
 
@@ -31,7 +32,7 @@ function ActModal({ act, onClose, onSave }) {
     patientLastName: '',
     patientFirstName: '',
     date: new Date().toISOString().split('T')[0],
-    actType: 'Consultation',
+    actType: ACT_TYPES[0] || 'Consultation',
     fee: '',
     paymentMethod: 'mutuelle_ok',
     paymentStatus: 'paid',
