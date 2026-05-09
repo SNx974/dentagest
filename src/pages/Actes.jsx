@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react'
 import { useApp } from '../context/AppContext'
-import { Plus, Edit2, Trash2, Search, Filter, Euro, Check, Clock, AlertCircle } from 'lucide-react'
+import { Plus, Edit2, Trash2, Search, Check, Clock, AlertCircle, Minus } from 'lucide-react'
 
 const DEFAULT_ACT_TYPES = [
   'Consultation', 'Urgence', 'Détartrage', 'Extraction simple', 'Extraction complexe',
@@ -13,12 +13,34 @@ const DEFAULT_ACT_TYPES = [
   'Autre',
 ]
 
-const PAYMENT_METHODS = [
-  { value: 'mutuelle_ok', label: '🏥 Mutuelle : OK' },
-  { value: 'ss_ok', label: '🏛 SS : OK envoyé' },
-  { value: 'cb', label: '💳 CB' },
-  { value: 'especes', label: '💵 Espèces' },
-]
+/* Encode/decode payment as JSON string stored in paymentMethod column */
+const encodePayment = (p) => JSON.stringify(p)
+const decodePayment = (pm) => {
+  if (!pm) return { ss: false, mutuelle: false, cash: null }
+  try {
+    if (pm.startsWith('{')) return JSON.parse(pm)
+  } catch {}
+  // backward compat with old string values
+  if (pm === 'ss_ok') return { ss: true, mutuelle: false, cash: null }
+  if (pm === 'mutuelle_ok') return { ss: false, mutuelle: true, cash: null }
+  if (pm === 'cb' || pm === 'card') return { ss: false, mutuelle: false, cash: 'cb' }
+  if (pm === 'especes' || pm === 'cash') return { ss: false, mutuelle: false, cash: 'especes' }
+  return { ss: false, mutuelle: false, cash: null }
+}
+const formatPaymentLabel = (pm) => {
+  const p = decodePayment(pm)
+  const parts = []
+  if (p.ss) parts.push('SS ✓')
+  if (p.mutuelle) parts.push('Mutuelle ✓')
+  if (p.cash === 'cb') parts.push('💳 CB')
+  if (p.cash === 'especes') parts.push('💵 Espèces')
+  return parts.length ? parts.join(' · ') : '—'
+}
+
+function newActRow(ACT_TYPES, settings, retro) {
+  const type = ACT_TYPES[0] || 'Consultation'
+  return { actType: type, fee: settings?.actPrices?.[type] || '', retrocessionRate: retro }
+}
 
 function ActModal({ act, onClose, onSave }) {
   const { data } = useApp()
@@ -26,163 +48,226 @@ function ActModal({ act, onClose, onSave }) {
   const defaultRepl = data?.replacements?.find(r => r.status === 'active') || data?.replacements?.[0]
   const defaultRate = defaultRepl?.retrocessionRate || data?.settings?.defaultRetrocessionRate || 70
 
-  const [form, setForm] = useState(act || {
-    replacementId: defaultRepl?.id || '',
-    cabinetId: defaultRepl?.cabinetId || '',
-    patientLastName: '',
-    patientFirstName: '',
-    date: new Date().toISOString().split('T')[0],
-    actType: ACT_TYPES[0] || 'Consultation',
-    fee: '',
-    paymentMethod: 'mutuelle_ok',
-    paymentStatus: 'paid',
-    retrocessionRate: defaultRate,
-    notes: '',
-  })
+  // Shared fields
+  const [patientLastName, setPatientLastName] = useState(act?.patientLastName || '')
+  const [patientFirstName, setPatientFirstName] = useState(act?.patientFirstName || '')
+  const [date, setDate] = useState(act?.date || new Date().toISOString().split('T')[0])
+  const [replacementId, setReplacementId] = useState(act?.replacementId || defaultRepl?.id || '')
+  const [cabinetId, setCabinetId] = useState(act?.cabinetId || defaultRepl?.cabinetId || '')
+  const [paymentStatus, setPaymentStatus] = useState(act?.paymentStatus || 'paid')
+  const [notes, setNotes] = useState(act?.notes || '')
 
-  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+  // Payment checkboxes
+  const initPay = decodePayment(act?.paymentMethod)
+  const [ssOk, setSsOk] = useState(initPay.ss)
+  const [mutuelleOk, setMutuelleOk] = useState(initPay.mutuelle)
+  const [cashMethod, setCashMethod] = useState(initPay.cash || '')
+
+  // Acts list (multi-act when creating, single when editing)
+  const [acts, setActs] = useState(
+    act
+      ? [{ actType: act.actType, fee: act.fee, retrocessionRate: act.retrocessionRate }]
+      : [newActRow(ACT_TYPES, data?.settings, defaultRate)]
+  )
+
+  const setActField = (idx, k, v) => setActs(a => a.map((row, i) => i === idx ? { ...row, [k]: v } : row))
+
+  const handleActTypeChange = (idx, type) => {
+    const price = data?.settings?.actPrices?.[type]
+    setActs(a => a.map((row, i) => i === idx ? { ...row, actType: type, ...(price && !act ? { fee: price } : {}) } : row))
+  }
+
+  const addActRow = () => setActs(a => [...a, newActRow(ACT_TYPES, data?.settings, a[a.length - 1]?.retrocessionRate || defaultRate)])
+  const removeActRow = (idx) => setActs(a => a.filter((_, i) => i !== idx))
 
   const handleReplChange = (replId) => {
+    setReplacementId(replId)
     const repl = data?.replacements?.find(r => r.id === replId)
-    set('replacementId', replId)
     if (repl) {
-      set('cabinetId', repl.cabinetId)
-      if (!act) set('retrocessionRate', repl.retrocessionRate)
+      setCabinetId(repl.cabinetId)
+      if (!act) setActs(a => a.map(row => ({ ...row, retrocessionRate: repl.retrocessionRate })))
     }
   }
 
-  const handleActTypeChange = (type) => {
-    set('actType', type)
-    if (!act) {
-      const price = data?.settings?.actPrices?.[type]
-      if (price) set('fee', price)
-    }
-  }
+  const paymentMethod = encodePayment({ ss: ssOk, mutuelle: mutuelleOk, cash: cashMethod || null })
+
+  const totalFee = acts.reduce((s, r) => s + (parseFloat(r.fee) || 0), 0)
+  const totalMoi = acts.reduce((s, r) => s + (parseFloat(r.fee) || 0) * r.retrocessionRate / 100, 0)
+  const totalTit = totalFee - totalMoi
 
   const handleSubmit = (e) => {
     e.preventDefault()
-    if (!form.patientLastName || !form.fee || !form.actType) return
-    onSave({ ...form, fee: parseFloat(form.fee) })
+    if (!patientLastName) return
+    const hasEmpty = acts.some(r => !r.fee || !r.actType)
+    if (hasEmpty) return
+    acts.forEach(row => {
+      onSave({ patientLastName, patientFirstName, date, replacementId, cabinetId, paymentStatus, paymentMethod, notes, actType: row.actType, fee: parseFloat(row.fee), retrocessionRate: row.retrocessionRate })
+    })
     onClose()
   }
 
-  const myPart = form.fee ? (parseFloat(form.fee) * form.retrocessionRate / 100) : 0
-  const titulairePart = form.fee ? (parseFloat(form.fee) * (100 - form.retrocessionRate) / 100) : 0
+  const SectionTitle = ({ children }) => (
+    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.6px', marginBottom: 10 }}>{children}</div>
+  )
 
-  const activeCabinet = form.cabinetId ? data?.cabinets?.find(c => c.id === form.cabinetId) : null
+  const CheckBox = ({ checked, onChange, label, color }) => (
+    <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', padding: '10px 14px', background: checked ? (color === 'blue' ? 'var(--primary-50)' : 'var(--success-bg)') : 'var(--bg-card)', border: `2px solid ${checked ? (color === 'blue' ? 'var(--primary)' : 'var(--success)') : 'var(--border)'}`, borderRadius: 'var(--radius-sm)', transition: 'all 0.15s', userSelect: 'none' }}>
+      <div style={{ width: 20, height: 20, borderRadius: 5, border: `2px solid ${checked ? (color === 'blue' ? 'var(--primary)' : 'var(--success)') : 'var(--border)'}`, background: checked ? (color === 'blue' ? 'var(--primary)' : 'var(--success)') : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'all 0.15s' }}>
+        {checked && <Check size={12} color="white" strokeWidth={3} />}
+      </div>
+      <input type="checkbox" checked={checked} onChange={e => onChange(e.target.checked)} style={{ display: 'none' }} />
+      <span style={{ fontSize: 14, fontWeight: 600, color: checked ? (color === 'blue' ? 'var(--primary)' : 'var(--success)') : 'var(--text-secondary)' }}>{label}</span>
+      {checked && <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, color: color === 'blue' ? 'var(--primary)' : 'var(--success)', background: color === 'blue' ? 'var(--primary-100)' : '#c8e6c9', padding: '2px 8px', borderRadius: 10 }}>VALIDÉ</span>}
+    </label>
+  )
 
   return (
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal modal-lg">
+      <div className="modal modal-lg" style={{ maxHeight: '92vh', display: 'flex', flexDirection: 'column' }}>
         <div className="modal-header">
-          <h2 className="modal-title">{act ? 'Modifier l\'acte' : '⚡ Enregistrer un acte'}</h2>
+          <h2 className="modal-title">{act ? 'Modifier l\'acte' : '⚡ Enregistrer des actes'}</h2>
           <button className="modal-close" onClick={onClose}>✕</button>
         </div>
-        <form onSubmit={handleSubmit}>
-          <div className="modal-body">
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
+          <div className="modal-body" style={{ flex: 1, overflowY: 'auto' }}>
+
             {/* Patient */}
-            <div style={{ background: 'var(--bg)', borderRadius: 'var(--radius)', padding: '14px 16px', marginBottom: 16 }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 10 }}>Patient</div>
-              <div className="form-row" style={{ marginBottom: 0 }}>
+            <div style={{ background: 'var(--bg)', borderRadius: 'var(--radius)', padding: '14px 16px', marginBottom: 14 }}>
+              <SectionTitle>Patient</SectionTitle>
+              <div className="form-row" style={{ marginBottom: 8 }}>
                 <div className="form-group" style={{ marginBottom: 0 }}>
                   <label className="form-label">Nom <span>*</span></label>
-                  <input className="form-control" placeholder="Dupont" value={form.patientLastName} onChange={e => set('patientLastName', e.target.value.toUpperCase())} required autoFocus />
+                  <input className="form-control" placeholder="DUPONT" value={patientLastName} onChange={e => setPatientLastName(e.target.value.toUpperCase())} required autoFocus />
                 </div>
                 <div className="form-group" style={{ marginBottom: 0 }}>
                   <label className="form-label">Prénom</label>
-                  <input className="form-control" placeholder="Marie" value={form.patientFirstName} onChange={e => set('patientFirstName', e.target.value)} />
+                  <input className="form-control" placeholder="Marie" value={patientFirstName} onChange={e => setPatientFirstName(e.target.value)} />
                 </div>
+              </div>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">Date <span>*</span></label>
+                <input type="date" className="form-control" value={date} onChange={e => setDate(e.target.value)} required />
               </div>
             </div>
 
-            {/* Acte */}
-            <div style={{ background: 'var(--bg)', borderRadius: 'var(--radius)', padding: '14px 16px', marginBottom: 16 }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 10 }}>Acte</div>
-              <div className="form-row">
-                <div className="form-group" style={{ marginBottom: 0 }}>
-                  <label className="form-label">Date <span>*</span></label>
-                  <input type="date" className="form-control" value={form.date} onChange={e => set('date', e.target.value)} required />
-                </div>
-                <div className="form-group" style={{ marginBottom: 0 }}>
-                  <label className="form-label">Type d'acte <span>*</span></label>
-                  <select className="form-control" value={form.actType} onChange={e => handleActTypeChange(e.target.value)}>
-                    {ACT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-                  </select>
-                </div>
-              </div>
-            </div>
-
-            {/* Finance */}
-            <div style={{ background: 'var(--bg)', borderRadius: 'var(--radius)', padding: '14px 16px', marginBottom: 16 }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 10 }}>Honoraires</div>
-              <div className="form-row">
-                <div className="form-group" style={{ marginBottom: 0 }}>
-                  <label className="form-label">Montant total <span>*</span></label>
-                  <div style={{ position: 'relative' }}>
-                    <input
-                      type="number" className="form-control" min={0} step={0.01}
-                      placeholder="0.00" value={form.fee}
-                      onChange={e => set('fee', e.target.value)}
-                      required style={{ paddingRight: 32 }}
-                    />
-                    <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }}>€</span>
-                  </div>
-                </div>
-                <div className="form-group" style={{ marginBottom: 0 }}>
-                  <label className="form-label">Rétrocession</label>
-                  <div style={{ position: 'relative' }}>
-                    <input
-                      type="number" className="form-control" min={0} max={100} step={1}
-                      value={form.retrocessionRate}
-                      onChange={e => set('retrocessionRate', parseFloat(e.target.value))}
-                      style={{ paddingRight: 32 }}
-                    />
-                    <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }}>%</span>
-                  </div>
-                </div>
+            {/* Actes */}
+            <div style={{ background: 'var(--bg)', borderRadius: 'var(--radius)', padding: '14px 16px', marginBottom: 14 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                <SectionTitle>Acte{acts.length > 1 ? 's' : ''}</SectionTitle>
+                {!act && (
+                  <button type="button" className="btn btn-secondary btn-sm" onClick={addActRow} style={{ gap: 5 }}>
+                    <Plus size={13} /> Ajouter un acte
+                  </button>
+                )}
               </div>
 
-              {form.fee > 0 && (
-                <div style={{ display: 'flex', gap: 12, marginTop: 12 }}>
-                  <div style={{ flex: 1, background: 'var(--success-bg)', borderRadius: 8, padding: '10px 14px', textAlign: 'center' }}>
-                    <div style={{ fontSize: 11, color: 'var(--success)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Votre part</div>
-                    <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--success)' }}>{myPart.toFixed(2)} €</div>
+              {acts.map((row, idx) => {
+                const myPart = (parseFloat(row.fee) || 0) * row.retrocessionRate / 100
+                const titPart = (parseFloat(row.fee) || 0) - myPart
+                return (
+                  <div key={idx} style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '12px 14px', marginBottom: idx < acts.length - 1 ? 10 : 0 }}>
+                    {acts.length > 1 && (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--primary)' }}>Acte {idx + 1}</span>
+                        <button type="button" onClick={() => removeActRow(idx)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--error)', display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }}>
+                          <Minus size={13} /> Retirer
+                        </button>
+                      </div>
+                    )}
+                    <div className="form-row" style={{ marginBottom: 8 }}>
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label className="form-label">Type d'acte <span>*</span></label>
+                        <select className="form-control" value={row.actType} onChange={e => handleActTypeChange(idx, e.target.value)}>
+                          {ACT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                        </select>
+                      </div>
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label className="form-label">Honoraires <span>*</span></label>
+                        <div style={{ position: 'relative' }}>
+                          <input type="number" className="form-control" min={0} step={0.01} placeholder="0.00" value={row.fee}
+                            onChange={e => setActField(idx, 'fee', e.target.value)} required style={{ paddingRight: 32 }} />
+                          <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }}>€</span>
+                        </div>
+                      </div>
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label className="form-label">Rétrocession</label>
+                        <div style={{ position: 'relative' }}>
+                          <input type="number" className="form-control" min={0} max={100} step={1} value={row.retrocessionRate}
+                            onChange={e => setActField(idx, 'retrocessionRate', parseFloat(e.target.value))} style={{ paddingRight: 32 }} />
+                          <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }}>%</span>
+                        </div>
+                      </div>
+                    </div>
+                    {parseFloat(row.fee) > 0 && (
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <div style={{ flex: 1, background: 'var(--success-bg)', borderRadius: 6, padding: '7px 10px', textAlign: 'center' }}>
+                          <div style={{ fontSize: 10, color: 'var(--success)', fontWeight: 600, textTransform: 'uppercase' }}>Ma part</div>
+                          <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--success)' }}>{myPart.toFixed(2)} €</div>
+                        </div>
+                        <div style={{ flex: 1, background: 'var(--warning-bg)', borderRadius: 6, padding: '7px 10px', textAlign: 'center' }}>
+                          <div style={{ fontSize: 10, color: 'var(--warning)', fontWeight: 600, textTransform: 'uppercase' }}>Titulaire</div>
+                          <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--warning)' }}>{titPart.toFixed(2)} €</div>
+                        </div>
+                      </div>
+                    )}
                   </div>
-                  <div style={{ flex: 1, background: 'var(--warning-bg)', borderRadius: 8, padding: '10px 14px', textAlign: 'center' }}>
-                    <div style={{ fontSize: 11, color: 'var(--warning)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Part titulaire</div>
-                    <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--warning)' }}>{titulairePart.toFixed(2)} €</div>
+                )
+              })}
+
+              {acts.length > 1 && totalFee > 0 && (
+                <div style={{ display: 'flex', gap: 8, marginTop: 10, padding: '10px 14px', background: 'var(--primary-50)', borderRadius: 'var(--radius-sm)' }}>
+                  <div style={{ flex: 1, textAlign: 'center' }}>
+                    <div style={{ fontSize: 10, color: 'var(--primary)', fontWeight: 600, textTransform: 'uppercase' }}>Total honoraires</div>
+                    <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--primary)' }}>{totalFee.toFixed(2)} €</div>
+                  </div>
+                  <div style={{ flex: 1, textAlign: 'center' }}>
+                    <div style={{ fontSize: 10, color: 'var(--success)', fontWeight: 600, textTransform: 'uppercase' }}>Total ma part</div>
+                    <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--success)' }}>{totalMoi.toFixed(2)} €</div>
+                  </div>
+                  <div style={{ flex: 1, textAlign: 'center' }}>
+                    <div style={{ fontSize: 10, color: 'var(--warning)', fontWeight: 600, textTransform: 'uppercase' }}>Total titulaire</div>
+                    <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--warning)' }}>{totalTit.toFixed(2)} €</div>
                   </div>
                 </div>
               )}
             </div>
 
             {/* Paiement */}
-            <div style={{ background: 'var(--bg)', borderRadius: 'var(--radius)', padding: '14px 16px', marginBottom: 16 }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 10 }}>Paiement</div>
-              <div className="form-row" style={{ marginBottom: 0 }}>
-                <div className="form-group" style={{ marginBottom: 0 }}>
-                  <label className="form-label">Moyen de paiement</label>
-                  <select className="form-control" value={form.paymentMethod} onChange={e => set('paymentMethod', e.target.value)}>
-                    {PAYMENT_METHODS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
-                  </select>
+            <div style={{ background: 'var(--bg)', borderRadius: 'var(--radius)', padding: '14px 16px', marginBottom: 14 }}>
+              <SectionTitle>Paiement</SectionTitle>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 10 }}>
+                <CheckBox checked={ssOk} onChange={setSsOk} label="SS : OK envoyé" color="blue" />
+                <CheckBox checked={mutuelleOk} onChange={setMutuelleOk} label="Mutuelle : OK" color="green" />
+              </div>
+              {(!ssOk || !mutuelleOk) && (
+                <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+                  {['cb', 'especes'].map(m => (
+                    <label key={m} style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', padding: '9px 12px', background: cashMethod === m ? 'var(--primary-50)' : 'var(--bg-card)', border: `2px solid ${cashMethod === m ? 'var(--primary)' : 'var(--border)'}`, borderRadius: 'var(--radius-sm)', transition: 'all 0.15s', userSelect: 'none' }}>
+                      <input type="radio" name="cash" value={m} checked={cashMethod === m} onChange={() => setCashMethod(cashMethod === m ? '' : m)} style={{ display: 'none' }} />
+                      <div style={{ width: 16, height: 16, borderRadius: '50%', border: `2px solid ${cashMethod === m ? 'var(--primary)' : 'var(--border)'}`, background: cashMethod === m ? 'var(--primary)' : 'transparent', flexShrink: 0 }} />
+                      <span style={{ fontSize: 13, fontWeight: 500, color: cashMethod === m ? 'var(--primary)' : 'var(--text-secondary)' }}>
+                        {m === 'cb' ? '💳 CB' : '💵 Espèces'}
+                      </span>
+                    </label>
+                  ))}
                 </div>
-                <div className="form-group" style={{ marginBottom: 0 }}>
-                  <label className="form-label">Statut</label>
-                  <select className="form-control" value={form.paymentStatus} onChange={e => set('paymentStatus', e.target.value)}>
-                    <option value="paid">✅ Payé</option>
-                    <option value="pending">⏳ En attente</option>
-                    <option value="partial">⚠ Partiel</option>
-                  </select>
-                </div>
+              )}
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">Statut global</label>
+                <select className="form-control" value={paymentStatus} onChange={e => setPaymentStatus(e.target.value)}>
+                  <option value="paid">✅ Payé</option>
+                  <option value="pending">⏳ En attente</option>
+                  <option value="partial">⚠ Partiel</option>
+                </select>
               </div>
             </div>
 
             {/* Cabinet / Remplacement */}
-            <div className="form-row">
+            <div className="form-row" style={{ marginBottom: 14 }}>
               <div className="form-group" style={{ marginBottom: 0 }}>
                 <label className="form-label">Remplacement</label>
-                <select className="form-control" value={form.replacementId} onChange={e => handleReplChange(e.target.value)}>
-                  <option value="">Aucun (hors remplacement)</option>
+                <select className="form-control" value={replacementId} onChange={e => handleReplChange(e.target.value)}>
+                  <option value="">Aucun</option>
                   {data?.replacements?.map(r => {
                     const cab = data?.cabinets?.find(c => c.id === r.cabinetId)
                     return (
@@ -196,23 +281,24 @@ function ActModal({ act, onClose, onSave }) {
               </div>
               <div className="form-group" style={{ marginBottom: 0 }}>
                 <label className="form-label">Cabinet</label>
-                <select className="form-control" value={form.cabinetId} onChange={e => set('cabinetId', e.target.value)}>
+                <select className="form-control" value={cabinetId} onChange={e => setCabinetId(e.target.value)}>
                   <option value="">Sélectionner</option>
                   {data?.cabinets?.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </div>
             </div>
 
-            <div className="form-group" style={{ marginTop: 12 }}>
+            <div className="form-group">
               <label className="form-label">Notes</label>
-              <input className="form-control" placeholder="Informations complémentaires..." value={form.notes} onChange={e => set('notes', e.target.value)} />
+              <input className="form-control" placeholder="Informations complémentaires..." value={notes} onChange={e => setNotes(e.target.value)} />
             </div>
+
           </div>
           <div className="modal-footer">
             <button type="button" className="btn btn-secondary" onClick={onClose}>Annuler</button>
             <button type="submit" className="btn btn-primary">
               <Check size={15} />
-              {act ? 'Modifier' : 'Enregistrer l\'acte'}
+              {act ? 'Modifier' : acts.length > 1 ? `Enregistrer ${acts.length} actes` : 'Enregistrer l\'acte'}
             </button>
           </div>
         </form>
@@ -284,10 +370,12 @@ export default function Actes() {
   const handleSave = (form) => {
     if (editing) updateAct(editing.id, form)
     else addAct(form)
-    setEditing(null)
   }
 
+  const handleModalClose = () => { setShowModal(false); setEditing(null) }
+
   const handleEdit = (a) => { setEditing(a); setShowModal(true) }
+
   const handleDelete = (id) => { if (window.confirm('Supprimer cet acte ?')) deleteAct(id) }
 
   return (
@@ -384,7 +472,6 @@ export default function Actes() {
                 const cab = getCabinet(act.cabinetId)
                 const myPart = act.fee * act.retrocessionRate / 100
                 const status = PAYMENT_STATUS_CONFIG[act.paymentStatus] || PAYMENT_STATUS_CONFIG.paid
-                const pm = PAYMENT_METHODS.find(m => m.value === act.paymentMethod)
                 return (
                   <tr key={act.id}>
                     <td style={{ whiteSpace: 'nowrap', fontSize: 13 }}>
@@ -405,7 +492,7 @@ export default function Actes() {
                     <td style={{ fontWeight: 600 }}>{act.fee.toLocaleString('fr-FR', { maximumFractionDigits: 2 })} €</td>
                     <td style={{ fontSize: 13, color: 'var(--text-muted)' }}>{act.retrocessionRate}%</td>
                     <td style={{ fontWeight: 700, color: 'var(--success)' }}>{myPart.toLocaleString('fr-FR', { maximumFractionDigits: 2 })} €</td>
-                    <td style={{ fontSize: 13, color: 'var(--text-muted)' }}>{pm?.label.split(' ')[0]} {pm?.label.split(' ').slice(1).join(' ')}</td>
+                    <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{formatPaymentLabel(act.paymentMethod)}</td>
                     <td><span className={`badge ${status.class}`}>{status.icon} {status.label}</span></td>
                     <td>
                       <div className="table-actions">
@@ -424,7 +511,7 @@ export default function Actes() {
       {showModal && (
         <ActModal
           act={editing}
-          onClose={() => { setShowModal(false); setEditing(null) }}
+          onClose={handleModalClose}
           onSave={handleSave}
         />
       )}
