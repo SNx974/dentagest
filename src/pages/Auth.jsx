@@ -18,24 +18,31 @@ export default function Auth() {
     e.preventDefault()
     setError('')
     setLoading(true)
-    await new Promise(r => setTimeout(r, 600))
-    if (mode === 'login') {
-      const ok = login(form.email, form.password)
-      if (!ok) setError('Email ou mot de passe incorrect.')
-    } else {
-      if (!form.firstName || !form.lastName || !form.email || !form.password) {
-        setError('Veuillez remplir tous les champs obligatoires.')
-        setLoading(false)
-        return
+    try {
+      if (mode === 'login') {
+        await login(form.email, form.password)
+      } else {
+        if (!form.firstName || !form.lastName || !form.email || !form.password) {
+          setError('Veuillez remplir tous les champs obligatoires.')
+          setLoading(false)
+          return
+        }
+        await register({ firstName: form.firstName, lastName: form.lastName, email: form.email, rpps: form.rpps })
       }
-      register({ firstName: form.firstName, lastName: form.lastName, email: form.email, rpps: form.rpps })
+    } catch (err) {
+      setError(err.message || 'Une erreur est survenue.')
     }
     setLoading(false)
   }
 
-  const demoLogin = () => {
-    setForm({ ...form, email: 'demo@dentagest.fr', password: 'demo' })
-    login('demo@dentagest.fr', 'demo')
+  const demoLogin = async () => {
+    setLoading(true)
+    try {
+      await login('demo@dentagest.fr', 'demo')
+    } catch (err) {
+      setError(err.message || 'Erreur de connexion démo.')
+    }
+    setLoading(false)
   }
 
   return (
