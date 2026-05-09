@@ -1,6 +1,16 @@
 import React, { useState } from 'react'
 import { useApp } from '../context/AppContext'
-import { Save, User, Calculator, Target, Palette, Download, Trash2, RefreshCw, AlertTriangle } from 'lucide-react'
+import { Save, User, Calculator, Target, Palette, Download, Trash2, AlertTriangle, Tag } from 'lucide-react'
+
+const ACT_TYPES = [
+  'Consultation', 'Urgence', 'Détartrage', 'Extraction simple', 'Extraction complexe',
+  'Composite antérieur', 'Composite postérieur', 'Inlay-Onlay', 'Couronne céramique',
+  'Couronne métal-céramique', 'Bridge 3 éléments', 'Bridge 4 éléments', 'Bridge 5+ éléments',
+  'Prothèse amovible complète', 'Prothèse amovible partielle', 'Implant', 'Greffe osseuse',
+  'Sinus lift', 'Traitement canalaire (1 canal)', 'Traitement canalaire (2 canaux)',
+  'Traitement canalaire (3+ canaux)', 'Retraitement canalaire', 'Parodontologie',
+  'Orthodontie adulte', 'Gouttière', 'Blanchiment', 'Radiographie', 'Panoramique', 'Autre',
+]
 
 function Section({ title, icon: Icon, children }) {
   return (
@@ -24,6 +34,7 @@ export default function Parametres() {
 
   const setS = (k, v) => setSettingsForm(f => ({ ...f, [k]: v }))
   const setCarcdsf = (k, v) => setSettingsForm(f => ({ ...f, carcdsf: { ...f.carcdsf, [k]: parseFloat(v) || 0 } }))
+  const setActPrice = (actType, v) => setSettingsForm(f => ({ ...f, actPrices: { ...(f.actPrices || {}), [actType]: v === '' ? undefined : parseFloat(v) || 0 } }))
   const setU = (k, v) => setUserForm(f => ({ ...f, [k]: v }))
 
   const handleSaveUser = () => {
@@ -191,6 +202,36 @@ export default function Parametres() {
 
         <div style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end' }}>
           <SaveButton id="settings" label="Sauvegarder les taux" />
+        </div>
+      </Section>
+
+      {/* Tarifs par acte */}
+      <Section title="Tarifs par défaut par acte" icon={Tag}>
+        <div style={{ background: 'var(--primary-50)', borderRadius: 'var(--radius)', padding: '12px 14px', marginBottom: 16, fontSize: 13, color: 'var(--primary)' }}>
+          💡 Renseignez vos tarifs habituels. Le montant sera pré-rempli automatiquement lors de la création d'un acte.
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 10 }}>
+          {ACT_TYPES.map(type => (
+            <div key={type} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--bg)', borderRadius: 'var(--radius-sm)', padding: '8px 12px' }}>
+              <label style={{ flex: 1, fontSize: 13, color: 'var(--text-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={type}>{type}</label>
+              <div style={{ position: 'relative', width: 90, flexShrink: 0 }}>
+                <input
+                  type="number"
+                  className="form-control"
+                  min={0}
+                  step={0.5}
+                  placeholder="—"
+                  value={settingsForm.actPrices?.[type] ?? ''}
+                  onChange={e => setActPrice(type, e.target.value)}
+                  style={{ paddingRight: 24, fontSize: 13, height: 34, textAlign: 'right' }}
+                />
+                <span style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', fontSize: 12, pointerEvents: 'none' }}>€</span>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end' }}>
+          <SaveButton id="settings" label="Sauvegarder les tarifs" />
         </div>
       </Section>
 

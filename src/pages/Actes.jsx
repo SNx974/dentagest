@@ -14,10 +14,10 @@ const ACT_TYPES = [
 ]
 
 const PAYMENT_METHODS = [
-  { value: 'card', label: '💳 Carte bancaire' },
-  { value: 'cash', label: '💵 Espèces' },
-  { value: 'check', label: '📄 Chèque' },
-  { value: 'virement', label: '🏦 Virement' },
+  { value: 'mutuelle_ok', label: '🏥 Mutuelle : OK' },
+  { value: 'ss_ok', label: '🏛 SS : OK envoyé' },
+  { value: 'cb', label: '💳 CB' },
+  { value: 'especes', label: '💵 Espèces' },
 ]
 
 function ActModal({ act, onClose, onSave }) {
@@ -33,7 +33,7 @@ function ActModal({ act, onClose, onSave }) {
     date: new Date().toISOString().split('T')[0],
     actType: 'Consultation',
     fee: '',
-    paymentMethod: 'card',
+    paymentMethod: 'mutuelle_ok',
     paymentStatus: 'paid',
     retrocessionRate: defaultRate,
     notes: '',
@@ -47,6 +47,14 @@ function ActModal({ act, onClose, onSave }) {
     if (repl) {
       set('cabinetId', repl.cabinetId)
       if (!act) set('retrocessionRate', repl.retrocessionRate)
+    }
+  }
+
+  const handleActTypeChange = (type) => {
+    set('actType', type)
+    if (!act) {
+      const price = data?.settings?.actPrices?.[type]
+      if (price) set('fee', price)
     }
   }
 
@@ -96,7 +104,7 @@ function ActModal({ act, onClose, onSave }) {
                 </div>
                 <div className="form-group" style={{ marginBottom: 0 }}>
                   <label className="form-label">Type d'acte <span>*</span></label>
-                  <select className="form-control" value={form.actType} onChange={e => set('actType', e.target.value)}>
+                  <select className="form-control" value={form.actType} onChange={e => handleActTypeChange(e.target.value)}>
                     {ACT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
                   </select>
                 </div>
