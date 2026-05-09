@@ -22,7 +22,7 @@ const NAV_ITEMS = [
   ]},
 ]
 
-function Sidebar() {
+function Sidebar({ mobileOpen, onClose }) {
   const { currentPage, setCurrentPage, sidebarOpen, setSidebarOpen, data, logout, updateSettings } = useApp()
   const theme = data?.settings?.theme || 'light'
 
@@ -33,7 +33,7 @@ function Sidebar() {
   const activeReplacements = data?.replacements?.filter(r => r.status === 'active').length || 0
 
   return (
-    <aside className={`sidebar${!sidebarOpen ? ' collapsed' : ''}`}>
+    <aside className={`sidebar${!sidebarOpen ? ' collapsed' : ''}${mobileOpen ? ' mobile-open' : ''}`}>
       <div className="sidebar-logo">
         <div className="logo-icon">🦷</div>
         {sidebarOpen && (
@@ -62,7 +62,7 @@ function Sidebar() {
                 <div
                   key={item.id}
                   className={`nav-item${currentPage === item.id ? ' active' : ''}`}
-                  onClick={() => setCurrentPage(item.id)}
+                  onClick={() => { setCurrentPage(item.id); onClose && onClose() }}
                   title={!sidebarOpen ? item.label : ''}
                 >
                   <Icon className="nav-icon" size={20} />
@@ -110,13 +110,15 @@ function Sidebar() {
 
 export default function Layout({ children }) {
   const { sidebarOpen, data, setCurrentPage } = useApp()
+  const [mobileOpen, setMobileOpen] = useState(false)
   const theme = data?.settings?.theme || 'light'
 
   return (
     <div className={`app-layout${theme === 'dark' ? ' dark' : ''}`}>
-      <Sidebar />
+      {mobileOpen && <div className="sidebar-overlay" onClick={() => setMobileOpen(false)} />}
+      <Sidebar mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} />
       <main className={`main-content${!sidebarOpen ? ' sidebar-collapsed' : ''}`}>
-        <TopBar />
+        <TopBar onMenuClick={() => setMobileOpen(o => !o)} />
         <div className="page-container">
           {children}
         </div>
@@ -125,7 +127,7 @@ export default function Layout({ children }) {
   )
 }
 
-function TopBar() {
+function TopBar({ onMenuClick }) {
   const { data, setCurrentPage } = useApp()
   const [search, setSearch] = useState('')
 
@@ -147,6 +149,9 @@ function TopBar() {
       position: 'sticky', top: 0, zIndex: 50,
       gap: 16,
     }}>
+      <button className="hamburger-btn" onClick={onMenuClick} aria-label="Menu">
+        <Menu size={22} />
+      </button>
       <div className="search-bar" style={{ flex: 1, maxWidth: 360 }}>
         <Search size={16} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
         <input
