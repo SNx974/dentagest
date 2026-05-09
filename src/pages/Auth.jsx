@@ -27,7 +27,7 @@ export default function Auth() {
           setLoading(false)
           return
         }
-        await register({ firstName: form.firstName, lastName: form.lastName, email: form.email, rpps: form.rpps })
+        await register({ firstName: form.firstName, lastName: form.lastName, email: form.email, password: form.password, rpps: form.rpps })
       }
     } catch (err) {
       setError(err.message || 'Une erreur est survenue.')
