@@ -1,6 +1,6 @@
-import React, { useMemo } from 'react'
+import React, { useMemo, useState } from 'react'
 import { useApp } from '../context/AppContext'
-import { FileText, X, Calendar, Percent } from 'lucide-react'
+import { FileText, X, ChevronLeft, ChevronRight } from 'lucide-react'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 
@@ -9,6 +9,60 @@ const fmtDate = (d) => new Date(d).toLocaleDateString('fr-FR', { weekday: 'long'
 const fmtDateShort = (d) => new Date(d).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })
 const fmtMoney = (n) => n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'
 const capitalize = (s) => s ? s.charAt(0).toUpperCase() + s.slice(1) : s
+
+/* ─── period helpers ─── */
+const toISO = (d) => d.toISOString().split('T')[0]
+
+const getWeekStart = (d) => {
+  const date = new Date(d)
+  const day = date.getDay() === 0 ? 6 : date.getDay() - 1  // lundi = 0
+  date.setDate(date.getDate() - day)
+  return toISO(date)
+}
+
+const addDays = (iso, n) => {
+  const d = new Date(iso); d.setDate(d.getDate() + n); return toISO(d)
+}
+
+const addWeeks = (iso, n) => addDays(iso, n * 7)
+
+const addMonths = (ym, n) => {
+  const [y, m] = ym.split('-').map(Number)
+  const d = new Date(y, m - 1 + n, 1)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+}
+
+const monthLabel = (ym) => {
+  const [y, m] = ym.split('-').map(Number)
+  return new Date(y, m - 1, 1).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })
+}
+
+const weekLabel = (iso) => {
+  const end = addDays(iso, 6)
+  return `${new Date(iso).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' })} → ${new Date(end).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' })}`
+}
+
+function filterActsByPeriod(acts, mode, day, week, month) {
+  switch (mode) {
+    case 'day':
+      return acts.filter(a => a.date?.split('T')[0] === day)
+    case 'week': {
+      const end = addDays(week, 6)
+      return acts.filter(a => { const d = a.date?.split('T')[0]; return d >= week && d <= end })
+    }
+    case 'month':
+      return acts.filter(a => a.date?.split('T')[0]?.startsWith(month))
+    default:
+      return acts
+  }
+}
+
+function periodLabelFull(mode, day, week, month, replacement) {
+  if (mode === 'day') return `Journee du ${new Date(day).toLocaleDateString('fr-FR', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })}`
+  if (mode === 'week') return `Semaine du ${weekLabel(week)}`
+  if (mode === 'month') return `Mois de ${monthLabel(month)}`
+  return `Totalite du remplacement (${fmtDateShort(replacement.startDate)}${replacement.endDate ? ' - ' + fmtDateShort(replacement.endDate) : ''})`
+}
 
 /* ─── build derived data ─── */
 function buildRecapData(acts, retrocessionRate) {
@@ -48,7 +102,7 @@ const pdfNum = (n, dec = 2) => {
 const pdfMoney = (n) => pdfNum(n, 2) + ' €'  // € en Unicode safe
 
 /* ─── PDF export ─── */
-function exportPDF({ replacement, cabinet, user, acts, days, patients, totalCA, totalRetro }) {
+function exportPDF({ replacement, cabinet, user, acts, days, patients, totalCA, totalRetro, periodLabel }) {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
   const P  = [21, 101, 192]   // primary blue
   const G  = [100, 116, 139]  // grey
@@ -70,8 +124,10 @@ function exportPDF({ replacement, cabinet, user, acts, days, patients, totalCA, 
   doc.setFontSize(8)
   doc.setFont('helvetica', 'normal')
   doc.setTextColor(200, 220, 255)
-  const period = `${fmtDateShort(replacement.startDate)}${replacement.endDate ? ' - ' + fmtDateShort(replacement.endDate) : ''}`
-  doc.text(`${cabinet?.name || ''}  |  Dr ${cabinet?.titulaireFirstName || ''} ${cabinet?.titulaireLastName || ''}  |  Periode : ${period}  |  Retrocession : ${retro}%`, pageW / 2, 22, { align: 'center' })
+  const period = periodLabel || `${fmtDateShort(replacement.startDate)}${replacement.endDate ? ' - ' + fmtDateShort(replacement.endDate) : ''}`
+  doc.text(`${cabinet?.name || ''}  |  Dr ${cabinet?.titulaireFirstName || ''} ${cabinet?.titulaireLastName || ''}  |  Retrocession : ${retro}%`, pageW / 2, 19, { align: 'center' })
+  doc.setTextColor(230, 240, 255)
+  doc.text(period, pageW / 2, 26, { align: 'center' })
 
   let curY = 38
 
@@ -95,32 +151,28 @@ function exportPDF({ replacement, cabinet, user, acts, days, patients, totalCA, 
   autoTable(doc, {
     startY: curY,
     showFoot: 'lastPage',
-    head: [['Jour', 'CA (EUR)', `Retro ${retro}% (EUR)`]],
+    head: [['Jour', 'CA', `Retro ${retro}%`, `Part titulaire`, 'Actes']],
     body: days.map(d => [
       capitalize(fmtDate(d.date)),
-      pdfNum(d.ca, 2),
-      pdfNum(d.retro, 3),
+      pdfMoney(d.ca),
+      pdfMoney(d.retro),
+      pdfMoney(d.ca - d.retro),
+      String(d.acts.length),
     ]),
-    foot: [['TOTAL', pdfNum(totalCA, 2), pdfNum(totalRetro, 2)]],
-    headStyles: {
-      fillColor: P, textColor: [255, 255, 255],
-      fontStyle: 'bold', fontSize: 9, halign: 'left',
-    },
-    footStyles: {
-      fillColor: [227, 242, 253], textColor: P,
-      fontStyle: 'bold', fontSize: 9,
-    },
+    foot: [['TOTAL', pdfMoney(totalCA), pdfMoney(totalRetro), pdfMoney(totalCA - totalRetro), String(acts.length)]],
+    headStyles: { fillColor: P, textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 9 },
+    footStyles: { fillColor: [227, 242, 253], textColor: P, fontStyle: 'bold', fontSize: 9 },
     bodyStyles: { fontSize: 9, textColor: [30, 40, 50] },
     alternateRowStyles: { fillColor: [248, 252, 255] },
     columnStyles: {
-      0: { cellWidth: 108, fontStyle: 'bold' },
-      1: { cellWidth: 37, halign: 'right' },
-      2: { cellWidth: 37, halign: 'right' },
+      0: { cellWidth: 82, fontStyle: 'bold' },
+      1: { cellWidth: 28, halign: 'right' },
+      2: { cellWidth: 28, halign: 'right', textColor: [30, 100, 50] },
+      3: { cellWidth: 28, halign: 'right', textColor: [180, 80, 0] },
+      4: { cellWidth: 16, halign: 'center' },
     },
     didParseCell: (data) => {
-      if (data.section === 'foot') {
-        if (data.column.index >= 1) data.cell.styles.halign = 'right'
-      }
+      if (data.section === 'foot' && data.column.index >= 1) data.cell.styles.halign = 'right'
     },
     margin: { left: M, right: M },
   })
@@ -139,12 +191,14 @@ function exportPDF({ replacement, cabinet, user, acts, days, patients, totalCA, 
   const patientMeta = []   // garde trace pour le coloriage
   patients.forEach(p => {
     p.acts.forEach((a, idx) => {
-      const myPart = a.fee * a.retrocessionRate / 100
+      const myPart  = a.fee * a.retrocessionRate / 100
+      const titPart = a.fee - myPart
       bodyRows.push([
         idx === 0 ? `${p.lastName} ${p.firstName}\n${pdfMoney(p.ca)}` : '',
         a.actType,
         pdfMoney(a.fee),
         pdfMoney(myPart),
+        pdfMoney(titPart),
       ])
       patientMeta.push({ isFirst: idx === 0, isLast: idx === p.acts.length - 1 })
     })
@@ -153,9 +207,9 @@ function exportPDF({ replacement, cabinet, user, acts, days, patients, totalCA, 
   autoTable(doc, {
     startY: curY,
     showFoot: 'lastPage',
-    head: [['Patient', 'Acte', 'CA', `Retro ${retro}%`]],
+    head: [['Patient', 'Acte', 'CA', `Retro ${retro}%`, 'Part titulaire']],
     body: bodyRows,
-    foot: [['TOTAL', '', pdfMoney(totalCA), pdfMoney(totalRetro)]],
+    foot: [['TOTAL', '', pdfMoney(totalCA), pdfMoney(totalRetro), pdfMoney(totalCA - totalRetro)]],
     headStyles: {
       fillColor: P, textColor: [255, 255, 255],
       fontStyle: 'bold', fontSize: 9,
@@ -166,10 +220,11 @@ function exportPDF({ replacement, cabinet, user, acts, days, patients, totalCA, 
     },
     bodyStyles: { fontSize: 9, textColor: [30, 40, 50] },
     columnStyles: {
-      0: { cellWidth: 55 },
-      1: { cellWidth: 75 },
-      2: { cellWidth: 26, halign: 'right' },
-      3: { cellWidth: 26, halign: 'right' },
+      0: { cellWidth: 48 },
+      1: { cellWidth: 62 },
+      2: { cellWidth: 24, halign: 'right' },
+      3: { cellWidth: 24, halign: 'right' },
+      4: { cellWidth: 24, halign: 'right' },
     },
     didParseCell: (data) => {
       if (data.section === 'body') {
@@ -188,6 +243,9 @@ function exportPDF({ replacement, cabinet, user, acts, days, patients, totalCA, 
         if (data.column.index === 3) {
           data.cell.styles.textColor = [30, 100, 50]
           data.cell.styles.fontStyle = 'bold'
+        }
+        if (data.column.index === 4) {
+          data.cell.styles.textColor = [180, 80, 0]
         }
       }
       if (data.section === 'foot' && data.column.index >= 2) {
@@ -266,71 +324,153 @@ export default function RecapRemplacement({ replacementId, onClose }) {
   const { data } = useApp()
 
   const replacement = data?.replacements?.find(r => r.id === replacementId)
-  const cabinet = replacement ? data?.cabinets?.find(c => c.id === replacement.cabinetId) : null
-  const acts = useMemo(() => (data?.acts || []).filter(a => a.replacementId === replacementId), [data?.acts, replacementId])
+  const cabinet     = replacement ? data?.cabinets?.find(c => c.id === replacement.cabinetId) : null
+  const allActs     = useMemo(() => (data?.acts || []).filter(a => a.replacementId === replacementId), [data?.acts, replacementId])
 
-  const { days, patients, totalCA, totalRetro } = useMemo(() => buildRecapData(acts, replacement?.retrocessionRate), [acts, replacement])
+  // ── Période ──
+  const [periodMode, setPeriodMode] = useState('all')
+  const [selDay,   setSelDay]   = useState(() => toISO(new Date()))
+  const [selWeek,  setSelWeek]  = useState(() => getWeekStart(new Date()))
+  const [selMonth, setSelMonth] = useState(() => `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}`)
+
+  const filteredActs = useMemo(
+    () => filterActsByPeriod(allActs, periodMode, selDay, selWeek, selMonth),
+    [allActs, periodMode, selDay, selWeek, selMonth]
+  )
+
+  const { days, patients, totalCA, totalRetro } = useMemo(
+    () => buildRecapData(filteredActs, replacement?.retrocessionRate),
+    [filteredActs, replacement]
+  )
 
   if (!replacement) return null
 
-  const retro = replacement.retrocessionRate
-
+  const retro   = replacement.retrocessionRate
   const thStyle = { padding: '10px 14px', fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.4px', borderBottom: '2px solid var(--border)', background: 'var(--bg)', whiteSpace: 'nowrap' }
   const tdStyle = (extra = {}) => ({ padding: '9px 14px', borderBottom: '1px solid var(--border)', fontSize: 13, ...extra })
 
+  const MODES = [
+    { id: 'all',   label: '📋 Totalité' },
+    { id: 'month', label: '🗓 Mois' },
+    { id: 'week',  label: '📆 Semaine' },
+    { id: 'day',   label: '📅 Journée' },
+  ]
+
+  // Label de la période active (pour PDF et affichage)
+  const activePeriodLabel = periodMode === 'day'
+    ? capitalize(fmtDate(selDay))
+    : periodMode === 'week'
+    ? `Semaine du ${weekLabel(selWeek)}`
+    : periodMode === 'month'
+    ? `Mois de ${capitalize(monthLabel(selMonth))}`
+    : `Totalité du remplacement`
+
   return (
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal modal-lg" style={{ maxHeight: '95vh', display: 'flex', flexDirection: 'column', width: 'min(96vw, 820px)' }}>
+      <div className="modal modal-lg" style={{ maxHeight: '95vh', display: 'flex', flexDirection: 'column', width: 'min(96vw, 860px)' }}>
 
-        {/* Header */}
-        <div className="modal-header" style={{ background: 'var(--primary)', color: 'white', borderRadius: 'var(--radius-lg) var(--radius-lg) 0 0' }}>
+        {/* ── Header bleu ── */}
+        <div style={{ background: 'var(--primary)', borderRadius: 'var(--radius-lg) var(--radius-lg) 0 0', padding: '16px 20px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
           <div>
-            <h2 style={{ fontSize: 17, fontWeight: 800, color: 'white', marginBottom: 2 }}>
-              Comptabilité remplacement Dr {data?.user?.firstName} {data?.user?.lastName}
+            <h2 style={{ fontSize: 17, fontWeight: 800, color: 'white', marginBottom: 4 }}>
+              Comptabilité remplacement — Dr {data?.user?.firstName} {data?.user?.lastName}
             </h2>
-            <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.8)', display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+            <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.8)', display: 'flex', gap: 14, flexWrap: 'wrap' }}>
               <span>🏥 {cabinet?.name}</span>
               <span>👨‍⚕️ Dr {cabinet?.titulaireFirstName} {cabinet?.titulaireLastName}</span>
               <span>📅 {fmtDateShort(replacement.startDate)}{replacement.endDate ? ' → ' + fmtDateShort(replacement.endDate) : ''}</span>
               <span>💰 Rétro {retro}%</span>
             </div>
           </div>
-          <button onClick={onClose} style={{ background: 'rgba(255,255,255,0.2)', border: 'none', borderRadius: 8, width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'white', flexShrink: 0 }}>
+          <button onClick={onClose} style={{ background: 'rgba(255,255,255,0.15)', border: 'none', borderRadius: 8, width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'white', flexShrink: 0 }}>
             <X size={16} />
           </button>
         </div>
 
+        {/* ── Sélecteur de période ── */}
+        <div style={{ padding: '14px 20px', background: 'var(--bg)', borderBottom: '1px solid var(--border)', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          {/* Tabs mode */}
+          <div style={{ display: 'flex', gap: 4, background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: 3 }}>
+            {MODES.map(m => (
+              <button key={m.id} onClick={() => setPeriodMode(m.id)}
+                style={{ padding: '6px 12px', borderRadius: 'var(--radius-sm)', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600, transition: 'all 0.15s',
+                  background: periodMode === m.id ? 'var(--primary)' : 'transparent',
+                  color: periodMode === m.id ? 'white' : 'var(--text-secondary)',
+                }}>
+                {m.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Contrôle selon le mode */}
+          {periodMode === 'day' && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <button className="btn btn-ghost btn-sm btn-icon" onClick={() => setSelDay(addDays(selDay, -1))}><ChevronLeft size={14}/></button>
+              <input type="date" className="form-control" style={{ width: 150, fontSize: 13 }} value={selDay} onChange={e => setSelDay(e.target.value)} />
+              <button className="btn btn-ghost btn-sm btn-icon" onClick={() => setSelDay(addDays(selDay, 1))}><ChevronRight size={14}/></button>
+            </div>
+          )}
+
+          {periodMode === 'week' && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <button className="btn btn-ghost btn-sm btn-icon" onClick={() => setSelWeek(addWeeks(selWeek, -1))}><ChevronLeft size={14}/></button>
+              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', padding: '6px 10px', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', whiteSpace: 'nowrap' }}>
+                {weekLabel(selWeek)}
+              </div>
+              <button className="btn btn-ghost btn-sm btn-icon" onClick={() => setSelWeek(addWeeks(selWeek, 1))}><ChevronRight size={14}/></button>
+            </div>
+          )}
+
+          {periodMode === 'month' && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <button className="btn btn-ghost btn-sm btn-icon" onClick={() => setSelMonth(addMonths(selMonth, -1))}><ChevronLeft size={14}/></button>
+              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', padding: '6px 12px', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', minWidth: 130, textAlign: 'center' }}>
+                {capitalize(monthLabel(selMonth))}
+              </div>
+              <button className="btn btn-ghost btn-sm btn-icon" onClick={() => setSelMonth(addMonths(selMonth, 1))}><ChevronRight size={14}/></button>
+            </div>
+          )}
+
+          {/* Label période active */}
+          <div style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic' }}>
+            {activePeriodLabel}
+          </div>
+        </div>
+
         <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px' }}>
 
-          {acts.length === 0 ? (
+          {filteredActs.length === 0 ? (
             <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
               <div style={{ fontSize: 40, marginBottom: 12 }}>📋</div>
-              <div style={{ fontWeight: 600, marginBottom: 6 }}>Aucun acte enregistré pour ce remplacement</div>
-              <div style={{ fontSize: 13 }}>Associez des actes à ce remplacement pour voir le récapitulatif.</div>
+              <div style={{ fontWeight: 600, marginBottom: 6 }}>Aucun acte pour cette période</div>
+              <div style={{ fontSize: 13 }}>
+                {allActs.length === 0
+                  ? 'Aucun acte n\'est associé à ce remplacement.'
+                  : 'Essayez une autre période ou "Totalité".'}
+              </div>
             </div>
           ) : (
             <>
-              {/* Summary totals */}
-              <div style={{ display: 'flex', gap: 12, marginBottom: 24, flexWrap: 'wrap' }}>
+              {/* Résumé */}
+              <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap' }}>
                 {[
-                  { label: 'CA total', val: totalCA, color: 'var(--primary)', bg: 'var(--primary-50)' },
+                  { label: 'CA de la période', val: totalCA, color: 'var(--primary)', bg: 'var(--primary-50)' },
                   { label: `Ma part (${retro}%)`, val: totalRetro, color: 'var(--success)', bg: 'var(--success-bg)' },
-                  { label: `Part titulaire (${100 - retro}%)`, val: totalCA - totalRetro, color: 'var(--warning)', bg: 'var(--warning-bg)' },
-                  { label: 'Actes', val: null, display: `${acts.length}`, color: 'var(--text)', bg: 'var(--bg)' },
+                  { label: `Part titulaire (${100-retro}%)`, val: totalCA - totalRetro, color: 'var(--warning)', bg: 'var(--warning-bg)' },
+                  { label: 'Actes', val: null, display: `${filteredActs.length}`, color: 'var(--text)', bg: 'var(--bg)' },
+                  { label: 'Patients', val: null, display: `${patients.length}`, color: 'var(--text)', bg: 'var(--bg)' },
                 ].map((s, i) => (
-                  <div key={i} style={{ flex: 1, minWidth: 130, background: s.bg, border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '12px 16px', textAlign: 'center' }}>
-                    <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 4 }}>{s.label}</div>
-                    <div style={{ fontSize: 18, fontWeight: 800, color: s.color }}>
-                      {s.display || fmtMoney(s.val)}
-                    </div>
+                  <div key={i} style={{ flex: 1, minWidth: 110, background: s.bg, border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '10px 12px', textAlign: 'center' }}>
+                    <div style={{ fontSize: 9, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 3 }}>{s.label}</div>
+                    <div style={{ fontSize: 17, fontWeight: 800, color: s.color }}>{s.display || fmtMoney(s.val)}</div>
                   </div>
                 ))}
               </div>
 
-              {/* ── Table 1: CA par jour ── */}
-              <div style={{ marginBottom: 28 }}>
-                <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ textDecoration: 'underline' }}>Soins :</span>
+              {/* Table 1 — Soins par jour */}
+              <div style={{ marginBottom: 24 }}>
+                <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ color: 'var(--primary)', borderBottom: '2px solid var(--primary)', paddingBottom: 2 }}>Soins</span>
                   <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 400 }}>récapitulatif par journée</span>
                 </div>
                 <div style={{ overflowX: 'auto', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
@@ -338,35 +478,41 @@ export default function RecapRemplacement({ replacementId, onClose }) {
                     <thead>
                       <tr>
                         <th style={{ ...thStyle, textAlign: 'left' }}>Jour</th>
-                        <th style={{ ...thStyle, textAlign: 'center' }}>CA</th>
-                        <th style={{ ...thStyle, textAlign: 'center' }}>Rétro {retro}%</th>
+                        <th style={{ ...thStyle, textAlign: 'right' }}>CA</th>
+                        <th style={{ ...thStyle, textAlign: 'right' }}>Rétro {retro}%</th>
+                        <th style={{ ...thStyle, textAlign: 'right' }}>Part titulaire</th>
+                        <th style={{ ...thStyle, textAlign: 'center' }}>Nb actes</th>
                       </tr>
                     </thead>
                     <tbody>
                       {days.map((d, i) => (
                         <tr key={d.date} style={{ background: i % 2 === 0 ? 'transparent' : 'var(--bg)' }}>
                           <td style={tdStyle({ fontWeight: 600 })}>{capitalize(fmtDate(d.date))}</td>
-                          <td style={tdStyle({ textAlign: 'center' })}>{d.ca.toLocaleString('fr-FR', { minimumFractionDigits: 2 })}</td>
-                          <td style={tdStyle({ textAlign: 'center', color: 'var(--success)', fontWeight: 600 })}>{d.retro.toLocaleString('fr-FR', { minimumFractionDigits: 3 })}</td>
+                          <td style={tdStyle({ textAlign: 'right', fontWeight: 700 })}>{fmtMoney(d.ca)}</td>
+                          <td style={tdStyle({ textAlign: 'right', color: 'var(--success)', fontWeight: 700 })}>{fmtMoney(d.retro)}</td>
+                          <td style={tdStyle({ textAlign: 'right', color: 'var(--warning)' })}>{fmtMoney(d.ca - d.retro)}</td>
+                          <td style={tdStyle({ textAlign: 'center', color: 'var(--text-muted)' })}>{d.acts.length}</td>
                         </tr>
                       ))}
                     </tbody>
                     <tfoot>
-                      <tr style={{ background: 'var(--primary-50)', fontWeight: 700 }}>
-                        <td style={{ ...tdStyle({ fontWeight: 700 }), color: 'var(--primary)', textTransform: 'uppercase', fontSize: 12, letterSpacing: '0.5px' }}>Total</td>
-                        <td style={{ ...tdStyle({ textAlign: 'center', fontWeight: 800 }), color: 'var(--primary)' }}>{totalCA.toLocaleString('fr-FR', { minimumFractionDigits: 2 })}</td>
-                        <td style={{ ...tdStyle({ textAlign: 'center', fontWeight: 800 }), color: 'var(--success)' }}>{totalRetro.toLocaleString('fr-FR', { minimumFractionDigits: 2 })}</td>
+                      <tr style={{ background: 'var(--primary-50)' }}>
+                        <td style={{ ...tdStyle({ fontWeight: 700, fontSize: 12 }), color: 'var(--primary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Total</td>
+                        <td style={{ ...tdStyle({ textAlign: 'right', fontWeight: 800 }), color: 'var(--primary)' }}>{fmtMoney(totalCA)}</td>
+                        <td style={{ ...tdStyle({ textAlign: 'right', fontWeight: 800 }), color: 'var(--success)' }}>{fmtMoney(totalRetro)}</td>
+                        <td style={{ ...tdStyle({ textAlign: 'right', fontWeight: 800 }), color: 'var(--warning)' }}>{fmtMoney(totalCA - totalRetro)}</td>
+                        <td style={{ ...tdStyle({ textAlign: 'center', fontWeight: 700 }), color: 'var(--primary)' }}>{filteredActs.length}</td>
                       </tr>
                     </tfoot>
                   </table>
                 </div>
               </div>
 
-              {/* ── Table 2: Détail patients ── */}
-              <div style={{ marginBottom: 28 }}>
-                <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ textDecoration: 'underline' }}>Détail patients :</span>
-                  <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 400 }}>actes par patient</span>
+              {/* Table 2 — Détail patients */}
+              <div style={{ marginBottom: 24 }}>
+                <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ color: 'var(--primary)', borderBottom: '2px solid var(--primary)', paddingBottom: 2 }}>Détail patients</span>
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 400 }}>{patients.length} patient{patients.length > 1 ? 's' : ''}</span>
                 </div>
                 <div style={{ overflowX: 'auto', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -375,64 +521,82 @@ export default function RecapRemplacement({ replacementId, onClose }) {
                         <th style={{ ...thStyle, textAlign: 'left' }}>Patient</th>
                         <th style={{ ...thStyle, textAlign: 'left' }}>Acte</th>
                         <th style={{ ...thStyle, textAlign: 'right' }}>CA</th>
-                        <th style={{ ...thStyle, textAlign: 'right' }}>Rétro {retro}%</th>
+                        <th style={{ ...thStyle, textAlign: 'right' }}>Ma part ({retro}%)</th>
+                        <th style={{ ...thStyle, textAlign: 'right' }}>Part titulaire</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {patients.map(p => (
+                      {patients.map(p =>
                         p.acts.map((a, idx) => {
-                          const myPart = a.fee * a.retrocessionRate / 100
+                          const myPart  = a.fee * a.retrocessionRate / 100
+                          const titPart = a.fee - myPart
                           return (
                             <tr key={a.id} style={{ borderBottom: idx === p.acts.length - 1 ? '2px solid var(--border)' : '1px solid var(--border)' }}>
                               {idx === 0 ? (
-                                <td rowSpan={p.acts.length} style={{ ...tdStyle(), verticalAlign: 'top', background: 'var(--primary-50)', borderRight: '1px solid var(--border)' }}>
-                                  <div style={{ fontWeight: 700, fontSize: 14 }}>{p.lastName} {p.firstName}</div>
-                                  <div style={{ fontSize: 12, color: 'var(--primary)', fontWeight: 700, marginTop: 2 }}>{fmtMoney(p.ca)}</div>
+                                <td rowSpan={p.acts.length} style={{ ...tdStyle(), verticalAlign: 'top', background: 'var(--primary-50)', borderRight: '2px solid var(--primary-100)' }}>
+                                  <div style={{ fontWeight: 800, fontSize: 13 }}>{p.lastName} {p.firstName}</div>
+                                  <div style={{ fontSize: 11, color: 'var(--primary)', fontWeight: 700, marginTop: 3 }}>{fmtMoney(p.ca)}</div>
+                                  <div style={{ fontSize: 10, color: 'var(--success)', marginTop: 1 }}>→ {fmtMoney(p.retro)}</div>
                                 </td>
                               ) : null}
-                              <td style={tdStyle({ color: 'var(--text-secondary)' })}>{a.actType}</td>
+                              <td style={tdStyle({ color: 'var(--text-secondary)', fontSize: 12 })}>{a.actType}</td>
                               <td style={tdStyle({ textAlign: 'right', fontWeight: 600 })}>{fmtMoney(a.fee)}</td>
-                              <td style={tdStyle({ textAlign: 'right', color: 'var(--success)', fontWeight: 600 })}>{fmtMoney(myPart)}</td>
+                              <td style={tdStyle({ textAlign: 'right', color: 'var(--success)', fontWeight: 700 })}>{fmtMoney(myPart)}</td>
+                              <td style={tdStyle({ textAlign: 'right', color: 'var(--warning)' })}>{fmtMoney(titPart)}</td>
                             </tr>
                           )
                         })
-                      ))}
+                      )}
                     </tbody>
                     <tfoot>
-                      <tr style={{ background: 'var(--primary-50)', fontWeight: 700 }}>
-                        <td style={{ ...tdStyle({ fontWeight: 700 }), color: 'var(--primary)', textTransform: 'uppercase', fontSize: 12, letterSpacing: '0.5px' }}>Total</td>
+                      <tr style={{ background: 'var(--primary-50)' }}>
+                        <td style={{ ...tdStyle({ fontWeight: 700, fontSize: 12 }), color: 'var(--primary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Total</td>
                         <td style={tdStyle()}></td>
                         <td style={{ ...tdStyle({ textAlign: 'right', fontWeight: 800 }), color: 'var(--primary)' }}>{fmtMoney(totalCA)}</td>
                         <td style={{ ...tdStyle({ textAlign: 'right', fontWeight: 800 }), color: 'var(--success)' }}>{fmtMoney(totalRetro)}</td>
+                        <td style={{ ...tdStyle({ textAlign: 'right', fontWeight: 800 }), color: 'var(--warning)' }}>{fmtMoney(totalCA - totalRetro)}</td>
                       </tr>
                     </tfoot>
                   </table>
                 </div>
               </div>
 
-              {/* ── Totaux finaux ── */}
-              <div style={{ paddingTop: 16, borderTop: '2px solid var(--border)' }}>
-                <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 6 }}>
-                  Total (soins) : <span style={{ color: 'var(--primary)' }}>{fmtMoney(totalCA)}</span>
-                </div>
-                <div style={{ fontSize: 15, fontWeight: 800 }}>
-                  Total rétro {retro}% : <span style={{ color: 'var(--success)' }}>{fmtMoney(totalRetro)}</span>
-                </div>
+              {/* Totaux finaux */}
+              <div style={{ display: 'flex', gap: 10, paddingTop: 16, borderTop: '2px solid var(--border)', flexWrap: 'wrap' }}>
+                {[
+                  { label: 'Total honoraires', val: totalCA, color: 'var(--primary)', bg: 'var(--primary-50)' },
+                  { label: `À conserver (${retro}%)`, val: totalRetro, color: 'var(--success)', bg: 'var(--success-bg)' },
+                  { label: `À reverser (${100-retro}%)`, val: totalCA - totalRetro, color: 'var(--warning)', bg: 'var(--warning-bg)' },
+                ].map((b, i) => (
+                  <div key={i} style={{ flex: 1, minWidth: 140, background: b.bg, borderRadius: 'var(--radius)', padding: '12px 16px', textAlign: 'center' }}>
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 4 }}>{b.label}</div>
+                    <div style={{ fontSize: 20, fontWeight: 900, color: b.color }}>{fmtMoney(b.val)}</div>
+                  </div>
+                ))}
               </div>
             </>
           )}
         </div>
 
         {/* Footer */}
-        <div className="modal-footer">
-          <button className="btn btn-secondary" onClick={onClose}>Fermer</button>
-          <button
-            className="btn btn-primary"
-            disabled={acts.length === 0}
-            onClick={() => exportPDF({ replacement, cabinet, user: data?.user, acts, days, patients, totalCA, totalRetro })}
-          >
-            <FileText size={15} /> Exporter PDF
-          </button>
+        <div className="modal-footer" style={{ justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic', alignSelf: 'center' }}>
+            {activePeriodLabel}
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn btn-secondary" onClick={onClose}>Fermer</button>
+            <button
+              className="btn btn-primary"
+              disabled={filteredActs.length === 0}
+              onClick={() => exportPDF({
+                replacement, cabinet, user: data?.user,
+                acts: filteredActs, days, patients, totalCA, totalRetro,
+                periodLabel: periodLabelFull(periodMode, selDay, selWeek, selMonth, replacement),
+              })}
+            >
+              <FileText size={15} /> Exporter PDF
+            </button>
+          </div>
         </div>
       </div>
     </div>
