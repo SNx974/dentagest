@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react'
 import { useApp } from '../context/AppContext'
-import { Plus, Edit2, Trash2, Calendar, MapPin, Percent, Search, Filter, ChevronDown } from 'lucide-react'
+import { Plus, Edit2, Trash2, Calendar, Percent, Search, FileText } from 'lucide-react'
+import RecapRemplacement from './RecapRemplacement'
 
 const STATUS_LABELS = {
   planned: { label: 'Planifié', class: 'badge-info' },
@@ -153,6 +154,7 @@ export default function Remplacements() {
   const { data, addReplacement, updateReplacement, deleteReplacement } = useApp()
   const [showModal, setShowModal] = useState(false)
   const [editing, setEditing] = useState(null)
+  const [recapId, setRecapId] = useState(null)
   const [search, setSearch] = useState('')
   const [filterStatus, setFilterStatus] = useState('all')
   const [filterCabinet, setFilterCabinet] = useState('all')
@@ -314,7 +316,10 @@ export default function Remplacements() {
                           Total actes : {acts.length}
                         </div>
                       </div>
-                      <div style={{ display: 'flex', gap: 6 }}>
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                        <button className="btn btn-secondary btn-sm" onClick={() => setRecapId(r.id)} title="Récapitulatif" style={{ gap: 5 }}>
+                          <FileText size={14} /> Récap
+                        </button>
                         <button className="btn btn-ghost btn-sm btn-icon" onClick={() => handleEdit(r)} title="Modifier">
                           <Edit2 size={15} />
                         </button>
@@ -336,6 +341,13 @@ export default function Remplacements() {
           replacement={editing}
           onClose={() => { setShowModal(false); setEditing(null) }}
           onSave={handleSave}
+        />
+      )}
+
+      {recapId && (
+        <RecapRemplacement
+          replacementId={recapId}
+          onClose={() => setRecapId(null)}
         />
       )}
     </div>

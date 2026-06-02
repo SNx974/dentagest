@@ -317,6 +317,7 @@ export default function Actes() {
   const { data, addAct, updateAct, deleteAct } = useApp()
   const [showModal, setShowModal] = useState(false)
   const [editing, setEditing] = useState(null)
+  const [grouped, setGrouped] = useState(false)
   const [search, setSearch] = useState('')
   const [filterCabinet, setFilterCabinet] = useState('all')
   const [filterStatus, setFilterStatus] = useState('all')
@@ -365,6 +366,19 @@ export default function Actes() {
       revenus: paid.reduce((s, a) => s + a.fee * a.retrocessionRate / 100, 0),
       nbPaid: paid.length,
     }
+  }, [filtered])
+
+  // Vue groupée : un groupe par (date + patient)
+  const groupedRows = useMemo(() => {
+    const groups = {}
+    filtered.forEach(a => {
+      const key = `${a.date?.split('T')[0]}||${a.patientLastName}||${a.patientFirstName || ''}`
+      if (!groups[key]) groups[key] = { date: a.date, patientLastName: a.patientLastName, patientFirstName: a.patientFirstName || '', acts: [], cabinetId: a.cabinetId, retrocessionRate: a.retrocessionRate, paymentStatus: a.paymentStatus, ca: 0, moi: 0 }
+      groups[key].acts.push(a.actType)
+      groups[key].ca += a.fee
+      groups[key].moi += a.fee * a.retrocessionRate / 100
+    })
+    return Object.values(groups).sort((a, b) => new Date(b.date) - new Date(a.date))
   }, [filtered])
 
   const handleSave = (form) => {
@@ -425,12 +439,22 @@ export default function Actes() {
           <option value="thisMonth">Ce mois</option>
           <option value="thisYear">Cette année</option>
         </select>
-        <select className="form-control" style={{ width: 160 }} value={sortBy} onChange={e => setSortBy(e.target.value)}>
-          <option value="date-desc">Date ↓</option>
-          <option value="date-asc">Date ↑</option>
-          <option value="fee-desc">Montant ↓</option>
-          <option value="patient">Patient A→Z</option>
-        </select>
+        {!grouped && (
+          <select className="form-control" style={{ width: 160 }} value={sortBy} onChange={e => setSortBy(e.target.value)}>
+            <option value="date-desc">Date ↓</option>
+            <option value="date-asc">Date ↑</option>
+            <option value="fee-desc">Montant ↓</option>
+            <option value="patient">Patient A→Z</option>
+          </select>
+        )}
+        <button
+          className={`btn btn-sm ${grouped ? 'btn-primary' : 'btn-secondary'}`}
+          onClick={() => setGrouped(g => !g)}
+          style={{ flexShrink: 0, gap: 5 }}
+          title="Regrouper les actes d'un même patient"
+        >
+          👥 {grouped ? 'Vue groupée' : 'Grouper'}
+        </button>
       </div>
 
       {filtered.length === 0 ? (
@@ -450,7 +474,55 @@ export default function Actes() {
             )}
           </div>
         </div>
+      ) : grouped ? (
+        /* ── Vue groupée par patient/jour ── */
+        <div className="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Patient</th>
+                <th>Actes réalisés</th>
+                <th>Cabinet</th>
+                <th>Total honoraires</th>
+                <th>Ma part</th>
+                <th>Statut</th>
+              </tr>
+            </thead>
+            <tbody>
+              {groupedRows.map((g, i) => {
+                const cab = getCabinet(g.cabinetId)
+                const status = PAYMENT_STATUS_CONFIG[g.paymentStatus] || PAYMENT_STATUS_CONFIG.paid
+                return (
+                  <tr key={i}>
+                    <td style={{ whiteSpace: 'nowrap', fontSize: 13 }}>
+                      {new Date(g.date).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: '2-digit' })}
+                    </td>
+                    <td style={{ fontWeight: 700 }}>
+                      {g.patientLastName}{g.patientFirstName ? ` ${g.patientFirstName}` : ''}
+                    </td>
+                    <td style={{ fontSize: 12, color: 'var(--text-secondary)', maxWidth: 220 }}>
+                      {g.acts.join(' · ')}
+                    </td>
+                    <td style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+                      {cab ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <div style={{ width: 8, height: 8, borderRadius: '50%', background: cab.color || 'var(--primary)', flexShrink: 0 }} />
+                          {cab.name.replace('Cabinet ', '').substring(0, 18)}
+                        </div>
+                      ) : '—'}
+                    </td>
+                    <td style={{ fontWeight: 700, color: 'var(--primary)' }}>{g.ca.toLocaleString('fr-FR', { maximumFractionDigits: 2 })} €</td>
+                    <td style={{ fontWeight: 800, color: 'var(--success)' }}>{g.moi.toLocaleString('fr-FR', { maximumFractionDigits: 2 })} €</td>
+                    <td><span className={`badge ${status.class}`}>{status.icon} {status.label}</span></td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
       ) : (
+        /* ── Vue liste normale ── */
         <div className="table-container">
           <table>
             <thead>

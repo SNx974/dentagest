@@ -74,6 +74,25 @@ export default function Dashboard() {
       .slice(0, 8)
   }, [data?.acts])
 
+  // CA du jour — groupé par patient
+  const todayData = useMemo(() => {
+    if (!data?.acts) return { patients: [], totalCA: 0, totalMoi: 0 }
+    const today = new Date().toISOString().split('T')[0]
+    const todayActs = data.acts.filter(a => a.date?.split('T')[0] === today)
+    const byPatient = {}
+    todayActs.forEach(a => {
+      const key = `${a.patientLastName}||${a.patientFirstName || ''}`
+      if (!byPatient[key]) byPatient[key] = { lastName: a.patientLastName, firstName: a.patientFirstName || '', acts: [], ca: 0, moi: 0 }
+      byPatient[key].acts.push(a.actType)
+      byPatient[key].ca += a.fee
+      byPatient[key].moi += a.fee * a.retrocessionRate / 100
+    })
+    const patients = Object.values(byPatient).sort((a, b) => a.lastName.localeCompare(b.lastName))
+    const totalCA = todayActs.reduce((s, a) => s + a.fee, 0)
+    const totalMoi = todayActs.reduce((s, a) => s + a.fee * a.retrocessionRate / 100, 0)
+    return { patients, totalCA, totalMoi }
+  }, [data?.acts])
+
   const activeReplacement = data?.replacements?.find(r => r.status === 'active')
   const activeCabinet = activeReplacement ? data?.cabinets?.find(c => c.id === activeReplacement?.cabinetId) : null
 
@@ -159,6 +178,62 @@ export default function Dashboard() {
                 <div className="progress-fill green" style={{ width: `${goalPct}%`, background: 'linear-gradient(90deg, var(--primary), #42A5F5)' }} />
               </div>
             </div>
+          )}
+        </div>
+      </div>
+
+      {/* Journée d'aujourd'hui */}
+      <div className="card" style={{ marginBottom: 24 }}>
+        <div className="card-header">
+          <div>
+            <div className="card-title">📅 Journée d'aujourd'hui</div>
+            <div className="card-subtitle">{new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: '2-digit', month: 'long' })}</div>
+          </div>
+          <button className="btn btn-ghost btn-sm" onClick={() => setCurrentPage('actes')}>Voir les actes</button>
+        </div>
+        <div className="card-body">
+          {todayData.patients.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '20px 0', color: 'var(--text-muted)', fontSize: 14 }}>
+              Aucun acte enregistré aujourd'hui
+            </div>
+          ) : (
+            <>
+              <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
+                <div style={{ flex: 1, minWidth: 120, background: 'var(--primary-50)', borderRadius: 'var(--radius)', padding: '10px 14px', textAlign: 'center' }}>
+                  <div style={{ fontSize: 10, color: 'var(--primary)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 2 }}>CA du jour</div>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--primary)' }}>{fmt(todayData.totalCA)}</div>
+                </div>
+                <div style={{ flex: 1, minWidth: 120, background: 'var(--success-bg)', borderRadius: 'var(--radius)', padding: '10px 14px', textAlign: 'center' }}>
+                  <div style={{ fontSize: 10, color: 'var(--success)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 2 }}>Ma part</div>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--success)' }}>{fmt(todayData.totalMoi)}</div>
+                </div>
+                <div style={{ flex: 1, minWidth: 120, background: 'var(--bg)', borderRadius: 'var(--radius)', padding: '10px 14px', textAlign: 'center' }}>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 2 }}>Patients</div>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--text)' }}>{todayData.patients.length}</div>
+                </div>
+              </div>
+              <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                  <thead>
+                    <tr style={{ background: 'var(--bg)' }}>
+                      {['Patient', 'Actes réalisés', 'Honoraires', 'Ma part'].map(h => (
+                        <th key={h} style={{ padding: '8px 14px', textAlign: h === 'Honoraires' || h === 'Ma part' ? 'right' : 'left', fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.4px', borderBottom: '1px solid var(--border)' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {todayData.patients.map((p, i) => (
+                      <tr key={i} style={{ borderBottom: '1px solid var(--border)', background: i % 2 === 0 ? 'transparent' : 'var(--bg)' }}>
+                        <td style={{ padding: '9px 14px', fontWeight: 700 }}>{p.lastName} {p.firstName}</td>
+                        <td style={{ padding: '9px 14px', color: 'var(--text-secondary)', fontSize: 12 }}>{p.acts.join(', ')}</td>
+                        <td style={{ padding: '9px 14px', textAlign: 'right', fontWeight: 600 }}>{fmt(p.ca)}</td>
+                        <td style={{ padding: '9px 14px', textAlign: 'right', fontWeight: 700, color: 'var(--success)' }}>{fmt(p.moi)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
         </div>
       </div>
