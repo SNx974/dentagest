@@ -40,134 +40,225 @@ function buildRecapData(acts, retrocessionRate) {
   return { days, patients, totalCA, totalRetro }
 }
 
+/* ─── PDF number helpers (évite l'espace insécable U+00A0 de toLocaleString) ─── */
+const pdfNum = (n, dec = 2) => {
+  const [int, d] = n.toFixed(dec).split('.')
+  return int.replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + ',' + d
+}
+const pdfMoney = (n) => pdfNum(n, 2) + ' €'  // € en Unicode safe
+
 /* ─── PDF export ─── */
 function exportPDF({ replacement, cabinet, user, acts, days, patients, totalCA, totalRetro }) {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
-  const PRIMARY = [21, 101, 192]
-  const GREY = [100, 100, 100]
+  const P  = [21, 101, 192]   // primary blue
+  const G  = [100, 116, 139]  // grey
+  const BG = [241, 245, 249]  // light bg
   const pageW = doc.internal.pageSize.getWidth()
+  const pageH = doc.internal.pageSize.getHeight()
   const retro = replacement.retrocessionRate
+  const M = 14  // margin
 
-  // Title
-  doc.setFontSize(16)
+  /* ── Bandeau header bleu ── */
+  doc.setFillColor(...P)
+  doc.rect(0, 0, pageW, 30, 'F')
+
+  doc.setFontSize(15)
   doc.setFont('helvetica', 'bold')
-  doc.setTextColor(0, 0, 0)
-  const title = `Comptabilité remplacement Dr ${user?.firstName || ''} ${user?.lastName || ''}`
-  doc.text(title, pageW / 2, 18, { align: 'center' })
+  doc.setTextColor(255, 255, 255)
+  doc.text(`Comptabilite remplacement Dr ${user?.firstName || ''} ${user?.lastName || ''}`, pageW / 2, 12, { align: 'center' })
 
-  // Underline
-  const titleW = doc.getTextWidth(title)
-  doc.setDrawColor(...PRIMARY)
-  doc.setLineWidth(0.5)
-  doc.line((pageW - titleW) / 2, 20, (pageW + titleW) / 2, 20)
-
-  // Cabinet / period info
-  doc.setFontSize(9)
+  doc.setFontSize(8)
   doc.setFont('helvetica', 'normal')
-  doc.setTextColor(...GREY)
-  const period = `${fmtDateShort(replacement.startDate)}${replacement.endDate ? ' — ' + fmtDateShort(replacement.endDate) : ''}`
-  doc.text(`Cabinet : ${cabinet?.name || ''}   ·   Dr ${cabinet?.titulaireFirstName || ''} ${cabinet?.titulaireLastName || ''}   ·   Période : ${period}`, pageW / 2, 26, { align: 'center' })
+  doc.setTextColor(200, 220, 255)
+  const period = `${fmtDateShort(replacement.startDate)}${replacement.endDate ? ' - ' + fmtDateShort(replacement.endDate) : ''}`
+  doc.text(`${cabinet?.name || ''}  |  Dr ${cabinet?.titulaireFirstName || ''} ${cabinet?.titulaireLastName || ''}  |  Periode : ${period}  |  Retrocession : ${retro}%`, pageW / 2, 22, { align: 'center' })
 
-  let curY = 33
+  let curY = 38
 
-  // ── Table 1: Soins par jour ──
-  doc.setFontSize(11)
-  doc.setFont('helvetica', 'bold')
-  doc.setTextColor(0, 0, 0)
-  doc.text('Soins :', 14, curY)
-  doc.setFont('helvetica', 'normal')
-  doc.setFontSize(9)
-  doc.setTextColor(...GREY)
-  doc.text('(tous les actes par journée)', 32, curY)
-  curY += 3
+  /* ── Section label helper ── */
+  const sectionLabel = (label, y) => {
+    doc.setFontSize(10)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(...P)
+    doc.text(label, M, y)
+    doc.setDrawColor(...P)
+    doc.setLineWidth(0.4)
+    doc.line(M, y + 1, M + doc.getTextWidth(label), y + 1)
+  }
+
+  /* ══════════════════════════════════
+     TABLE 1 — CA PAR JOUR
+  ══════════════════════════════════ */
+  sectionLabel('Soins - Recapitulatif par journee', curY)
+  curY += 4
 
   autoTable(doc, {
     startY: curY,
-    head: [['Jour', 'CA', `Rétro ${retro}%`]],
+    showFoot: 'lastPage',
+    head: [['Jour', 'CA (EUR)', `Retro ${retro}% (EUR)`]],
     body: days.map(d => [
       capitalize(fmtDate(d.date)),
-      d.ca.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-      d.retro.toLocaleString('fr-FR', { minimumFractionDigits: 3, maximumFractionDigits: 3 }),
+      pdfNum(d.ca, 2),
+      pdfNum(d.retro, 3),
     ]),
-    foot: [['Total', totalCA.toLocaleString('fr-FR', { minimumFractionDigits: 2 }), totalRetro.toLocaleString('fr-FR', { minimumFractionDigits: 2 })]],
-    headStyles: { fillColor: PRIMARY, textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 9 },
-    footStyles: { fillColor: [240, 247, 255], textColor: PRIMARY, fontStyle: 'bold', fontSize: 9 },
-    bodyStyles: { fontSize: 9 },
+    foot: [['TOTAL', pdfNum(totalCA, 2), pdfNum(totalRetro, 2)]],
+    headStyles: {
+      fillColor: P, textColor: [255, 255, 255],
+      fontStyle: 'bold', fontSize: 9, halign: 'left',
+    },
+    footStyles: {
+      fillColor: [227, 242, 253], textColor: P,
+      fontStyle: 'bold', fontSize: 9,
+    },
+    bodyStyles: { fontSize: 9, textColor: [30, 40, 50] },
     alternateRowStyles: { fillColor: [248, 252, 255] },
     columnStyles: {
-      0: { cellWidth: 90, fontStyle: 'bold' },
-      1: { cellWidth: 45, halign: 'center' },
-      2: { cellWidth: 45, halign: 'center' },
+      0: { cellWidth: 108, fontStyle: 'bold' },
+      1: { cellWidth: 37, halign: 'right' },
+      2: { cellWidth: 37, halign: 'right' },
     },
-    margin: { left: 14, right: 14 },
+    didParseCell: (data) => {
+      if (data.section === 'foot') {
+        if (data.column.index >= 1) data.cell.styles.halign = 'right'
+      }
+    },
+    margin: { left: M, right: M },
   })
 
   curY = doc.lastAutoTable.finalY + 10
 
-  // ── Table 2: Détail patients ──
-  doc.setFontSize(11)
-  doc.setFont('helvetica', 'bold')
-  doc.setTextColor(0, 0, 0)
-  doc.text('Détail patients :', 14, curY)
-  curY += 3
+  /* ══════════════════════════════════
+     TABLE 2 — DETAIL PATIENTS
+  ══════════════════════════════════ */
+  sectionLabel('Detail patients', curY)
+  curY += 4
 
-  // Build rows — one row per act, with patient name only on first act
-  const patientRows = []
+  // Construction des lignes : une ligne = un acte
+  // La cellule Patient n'est remplie que sur la 1ère ligne du patient
+  const bodyRows = []
+  const patientMeta = []   // garde trace pour le coloriage
   patients.forEach(p => {
     p.acts.forEach((a, idx) => {
       const myPart = a.fee * a.retrocessionRate / 100
-      patientRows.push({
-        patient: idx === 0 ? `${p.lastName} ${p.firstName}\n${fmtMoney(p.ca)}` : '',
-        acte: a.actType,
-        ca: fmtMoney(a.fee),
-        retro: fmtMoney(myPart),
-        isFirst: idx === 0,
-        isLast: idx === p.acts.length - 1,
-      })
+      bodyRows.push([
+        idx === 0 ? `${p.lastName} ${p.firstName}\n${pdfMoney(p.ca)}` : '',
+        a.actType,
+        pdfMoney(a.fee),
+        pdfMoney(myPart),
+      ])
+      patientMeta.push({ isFirst: idx === 0, isLast: idx === p.acts.length - 1 })
     })
   })
 
   autoTable(doc, {
     startY: curY,
-    head: [['Patient', 'Acte', 'CA', `Rétro ${retro}%`]],
-    body: patientRows.map(r => [r.patient, r.acte, r.ca, r.retro]),
-    foot: [['Total', '', fmtMoney(totalCA), fmtMoney(totalRetro)]],
-    headStyles: { fillColor: PRIMARY, textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 9 },
-    footStyles: { fillColor: [240, 247, 255], textColor: PRIMARY, fontStyle: 'bold', fontSize: 9 },
-    bodyStyles: { fontSize: 9 },
-    alternateRowStyles: {},
+    showFoot: 'lastPage',
+    head: [['Patient', 'Acte', 'CA', `Retro ${retro}%`]],
+    body: bodyRows,
+    foot: [['TOTAL', '', pdfMoney(totalCA), pdfMoney(totalRetro)]],
+    headStyles: {
+      fillColor: P, textColor: [255, 255, 255],
+      fontStyle: 'bold', fontSize: 9,
+    },
+    footStyles: {
+      fillColor: [227, 242, 253], textColor: P,
+      fontStyle: 'bold', fontSize: 9,
+    },
+    bodyStyles: { fontSize: 9, textColor: [30, 40, 50] },
+    columnStyles: {
+      0: { cellWidth: 55 },
+      1: { cellWidth: 75 },
+      2: { cellWidth: 26, halign: 'right' },
+      3: { cellWidth: 26, halign: 'right' },
+    },
     didParseCell: (data) => {
-      if (data.section === 'body' && data.column.index === 0 && data.cell.raw) {
-        data.cell.styles.fontStyle = 'bold'
-        data.cell.styles.fillColor = [245, 248, 255]
+      if (data.section === 'body') {
+        const meta = patientMeta[data.row.index]
+        if (data.column.index === 0 && data.cell.raw) {
+          // Cellule patient remplie → fond bleu clair + gras
+          data.cell.styles.fontStyle = 'bold'
+          data.cell.styles.fontSize = 8.5
+          data.cell.styles.fillColor = [232, 240, 254]
+          data.cell.styles.textColor = [20, 60, 130]
+        } else if (data.column.index === 0 && !data.cell.raw) {
+          // Cellule patient vide (actes suivants) → fond encore plus clair
+          data.cell.styles.fillColor = [245, 248, 255]
+        }
+        if (data.column.index >= 2) data.cell.styles.halign = 'right'
+        if (data.column.index === 3) {
+          data.cell.styles.textColor = [30, 100, 50]
+          data.cell.styles.fontStyle = 'bold'
+        }
+      }
+      if (data.section === 'foot' && data.column.index >= 2) {
+        data.cell.styles.halign = 'right'
       }
     },
-    columnStyles: {
-      0: { cellWidth: 52 },
-      1: { cellWidth: 60 },
-      2: { cellWidth: 30, halign: 'right' },
-      3: { cellWidth: 30, halign: 'right' },
+    didDrawCell: (data) => {
+      // Trait de séparation entre patients (bas de la dernière ligne d'un patient)
+      if (data.section === 'body') {
+        const meta = patientMeta[data.row.index]
+        if (meta?.isLast) {
+          doc.setDrawColor(180, 200, 230)
+          doc.setLineWidth(0.3)
+          doc.line(data.cell.x, data.cell.y + data.cell.height, data.cell.x + data.cell.width, data.cell.y + data.cell.height)
+        }
+      }
     },
-    margin: { left: 14, right: 14 },
+    margin: { left: M, right: M },
   })
 
-  const finalY = doc.lastAutoTable.finalY + 8
+  /* ── Totaux finaux (boîtes colorées) ── */
+  const finalY = doc.lastAutoTable.finalY + 10
+  const pageLeft = doc.lastAutoTable.settings.margin.left
+  const usableW = pageW - M * 2
+  const boxW = (usableW - 8) / 3
+  const boxH = 16
+  const boxes = [
+    { label: 'Total honoraires', val: totalCA, bg: [227, 242, 253], fg: P },
+    { label: `Ma part (${retro}%)`, val: totalRetro, bg: [232, 245, 233], fg: [30, 100, 50] },
+    { label: `Part titulaire (${100 - retro}%)`, val: totalCA - totalRetro, bg: [255, 243, 224], fg: [180, 80, 0] },
+  ]
 
-  // ── Totaux finaux ──
-  doc.setFontSize(11)
-  doc.setFont('helvetica', 'bold')
-  doc.setTextColor(0, 0, 0)
-  doc.text(`Total (soins) : ${fmtMoney(totalCA)}`, 14, finalY)
-  doc.text(`Total rétro ${retro}% : ${fmtMoney(totalRetro)}`, 14, finalY + 7)
+  // Vérifie qu'on a assez de place, sinon nouvelle page
+  if (finalY + boxH + 12 > pageH - 15) {
+    doc.addPage()
+    const newY = 20
+    drawBoxes(doc, boxes, M, newY, boxW, boxH, pdfMoney)
+  } else {
+    drawBoxes(doc, boxes, M, finalY, boxW, boxH, pdfMoney)
+  }
 
-  // Footer
-  doc.setFontSize(7.5)
-  doc.setFont('helvetica', 'normal')
-  doc.setTextColor(180, 180, 180)
-  doc.text(`DentaGest — Généré le ${new Date().toLocaleDateString('fr-FR')} — Document confidentiel`, pageW / 2, doc.internal.pageSize.getHeight() - 6, { align: 'center' })
+  /* ── Numéros de page ── */
+  const totalPages = doc.internal.getNumberOfPages()
+  for (let i = 1; i <= totalPages; i++) {
+    doc.setPage(i)
+    doc.setFontSize(7.5)
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(160, 160, 160)
+    doc.text(
+      `DentaGest  -  Genere le ${new Date().toLocaleDateString('fr-FR')}  -  Page ${i}/${totalPages}`,
+      pageW / 2, pageH - 5, { align: 'center' }
+    )
+  }
 
-  const filename = `Compta_${user?.lastName || 'Dr'}_${cabinet?.name?.replace(/\s+/g, '_') || 'cabinet'}_${new Date().toISOString().split('T')[0]}.pdf`
+  const filename = `Compta_${(user?.lastName || 'Dr').replace(/\s+/g,'_')}_${(cabinet?.name || 'cabinet').replace(/\s+/g,'_')}_${new Date().toISOString().split('T')[0]}.pdf`
   doc.save(filename)
+}
+
+function drawBoxes(doc, boxes, x0, y, boxW, boxH, pdfMoney) {
+  boxes.forEach((b, i) => {
+    const x = x0 + i * (boxW + 4)
+    doc.setFillColor(...b.bg)
+    doc.roundedRect(x, y, boxW, boxH, 2, 2, 'F')
+    doc.setFontSize(7)
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(...b.fg)
+    doc.text(b.label, x + boxW / 2, y + 5.5, { align: 'center' })
+    doc.setFontSize(11)
+    doc.setFont('helvetica', 'bold')
+    doc.text(pdfMoney(b.val), x + boxW / 2, y + 12, { align: 'center' })
+  })
 }
 
 /* ─── Main Component ─── */
